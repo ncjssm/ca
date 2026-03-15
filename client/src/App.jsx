@@ -538,6 +538,8 @@ export default function App() {
   const micTestStreamRef = useRef(null);
   const micTestRafRef = useRef(null);
   const micTestAudioRef = useRef(null);
+  const dmScreenVideoSenderRef = useRef(null);
+  const dmScreenAudioSenderRef = useRef(null);
   const micGainNodeRef = useRef(null);
   const micGateGainRef = useRef(null);
   const micLowRef = useRef(null);
@@ -562,6 +564,8 @@ export default function App() {
   const [groupCall, setGroupCall] = useState({ groupId: null, status: "idle", participants: [], startedAt: null });
   const [incomingGroupCall, setIncomingGroupCall] = useState(null);
   const [groupShares, setGroupShares] = useState({});
+  const [dmShareStream, setDmShareStream] = useState(null);
+  const [groupCallVisible, setGroupCallVisible] = useState(true);
   const [screenShareWindow, setScreenShareWindow] = useState({ open: false, label: "" });
 
   const socketRef = useRef(null);
@@ -740,6 +744,7 @@ export default function App() {
   const groupPeersRef = useRef(new Map());
   const groupLocalStreamRef = useRef(null);
   const groupLocalScreenRef = useRef(null);
+  const dmLocalScreenRef = useRef(null);
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -803,6 +808,24 @@ export default function App() {
       return { id: Number(id), stream, name: member ? `@${member.username}` : `@${id}` };
     });
   }, [groupShares, selectedGroup]);
+
+  const dmShareEntry = useMemo(() => {
+    if (!dmShareStream || !callState.withUserId) return null;
+    const other =
+      friendsAll.find((f) => f.id === callState.withUserId) ||
+      friends.find((f) => f.id === callState.withUserId) ||
+      manualDmUsers.find((f) => f.id === callState.withUserId) ||
+      null;
+    return {
+      id: `dm-${callState.withUserId}`,
+      stream: dmShareStream,
+      name: other ? `@${other.username}` : "Screen Share",
+    };
+  }, [dmShareStream, callState.withUserId, friendsAll, friends, manualDmUsers]);
+
+  const screenShareEntries = useMemo(() => {
+    return dmShareEntry ? [...groupShareEntries, dmShareEntry] : groupShareEntries;
+  }, [groupShareEntries, dmShareEntry]);
 
   const [dmBackgrounds, setDmBackgrounds] = useState({});
 
@@ -1143,6 +1166,7 @@ export default function App() {
     });
 
     socket.on("group:call:ring", ({ groupId, fromId, startedAt }) => {
+      setGroupCallVisible(true);
       setGroupCall((prev) => ({
         groupId,
         status: prev.groupId === groupId && prev.status === "in-call" ? "in-call" : "ringing",
@@ -1153,12 +1177,14 @@ export default function App() {
     });
 
     socket.on("group:call:participants", ({ groupId, participants, startedAt }) => {
+      setGroupCallVisible(true);
       setGroupCall({ groupId, status: "in-call", participants, startedAt });
       participants.forEach((pid) => setupGroupPeer(groupId, pid));
     });
 
     socket.on("group:call:join", ({ groupId, userId }) => {
       if (groupCall.groupId !== groupId) return;
+      setGroupCallVisible(true);
       setGroupCall((prev) => ({
         ...prev,
         status: "in-call",
@@ -1184,6 +1210,7 @@ export default function App() {
 
     socket.on("group:call:active", ({ groupId, startedAt }) => {
       if (groupCall.groupId !== groupId) return;
+      setGroupCallVisible(true);
       setGroupCall((prev) => ({
         ...prev,
         status: "in-call",
@@ -1193,6 +1220,7 @@ export default function App() {
 
     socket.on("group:call:ended", ({ groupId }) => {
       if (groupCall.groupId === groupId) {
+        setGroupCallVisible(false);
         cleanupGroupCall();
       }
     });
@@ -1975,16 +2003,16 @@ export default function App() {
 
   useEffect(() => {
     if (!screenShareWindow.open) return;
-    if (!groupLocalScreenRef.current && groupShareEntries.length === 0) {
+    if (!groupLocalScreenRef.current && !dmLocalScreenRef.current && screenShareEntries.length === 0) {
       setScreenShareWindow((prev) => ({ ...prev, open: false }));
     }
-  }, [groupShareEntries, screenShareWindow.open]);
+  }, [screenShareEntries, screenShareWindow.open]);
 
   useEffect(() => {
     const shouldRing =
       callState.status === "calling" ||
       !!incomingCall ||
-      groupCall.status === "ringing" ||
+      (groupCallVisible && groupCall.status === "ringing") ||
       !!incomingGroupCall;
     if (shouldRing) {
       startRingTone();
@@ -2406,11 +2434,34 @@ export default function App() {
 
     pc.ontrack = (event) => {
       if (event.track.kind === "audio") {
-        const stream = new MediaStream([event.track]);
-        remoteStreamRef.current = stream;
+        let stream = remoteStreamRef.current;
+        if (!stream) {
+          stream = new MediaStream();
+          remoteStreamRef.current = stream;
+        }
+        if (!stream.getTracks().some((t) => t.id === event.track.id)) {
+          stream.addTrack(event.track);
+        }
         playRemoteAudio(stream);
         setRemotePresent(true);
         setAudioStreamTick((n) => n + 1);
+      }
+      if (event.track.kind === "video") {
+        const stream = new MediaStream([event.track]);
+        setDmShareStream(stream);
+        const other =
+          friendsAll.find((f) => f.id === otherId) ||
+          friends.find((f) => f.id === otherId) ||
+          manualDmUsers.find((f) => f.id === otherId) ||
+          null;
+        setScreenShareWindow((prev) => ({
+          ...prev,
+          open: true,
+          label: other ? `Sharing: @${other.username}` : "Screen Share",
+        }));
+        event.track.onended = () => {
+          setDmShareStream(null);
+        };
       }
     };
 
@@ -2790,6 +2841,11 @@ export default function App() {
     }
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
+    dmLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
+    dmLocalScreenRef.current = null;
+    dmScreenVideoSenderRef.current = null;
+    dmScreenAudioSenderRef.current = null;
+    setDmShareStream(null);
     remoteStreamRef.current = null;
   }
 
@@ -2797,6 +2853,7 @@ export default function App() {
     socketRef.current?.emit("group:call:start", { groupId });
     socketRef.current?.emit("group:call:join", { groupId });
     setGroupCall({ groupId, status: "ringing", participants: [], startedAt: Date.now() });
+    setGroupCallVisible(true);
   }
 
   async function joinGroupCall(groupId) {
@@ -2807,12 +2864,13 @@ export default function App() {
     if (!groupCall.groupId) return;
     socketRef.current?.emit("group:call:leave", { groupId: groupCall.groupId });
     cleanupGroupCall();
+    setGroupCallVisible(false);
   }
 
   async function setupGroupPeer(groupId, peerId) {
     if (groupPeersRef.current.has(peerId)) return;
     const pc = new RTCPeerConnection(STUN_CONFIG);
-    groupPeersRef.current.set(peerId, { pc });
+    groupPeersRef.current.set(peerId, { pc, audioStream: null });
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -2829,9 +2887,18 @@ export default function App() {
         setScreenShareWindow((prev) => ({ ...prev, open: true, label }));
       }
       if (event.track.kind === "audio") {
+        const entry = groupPeersRef.current.get(peerId);
+        let stream = entry?.audioStream;
+        if (!stream) {
+          stream = new MediaStream();
+          if (entry) entry.audioStream = stream;
+        }
+        if (stream && !stream.getTracks().some((t) => t.id === event.track.id)) {
+          stream.addTrack(event.track);
+        }
         const audio = document.getElementById(`xp-group-audio-${peerId}`);
-        if (audio) {
-          audio.srcObject = new MediaStream([event.track]);
+        if (audio && stream) {
+          audio.srcObject = stream;
           audio.play().catch(() => {});
         }
       }
@@ -2860,6 +2927,9 @@ export default function App() {
     if (entry?.pc) {
       entry.pc.close();
     }
+    if (entry?.audioStream) {
+      entry.audioStream.getTracks().forEach((t) => t.stop());
+    }
     groupPeersRef.current.delete(peerId);
     setGroupShares((prev) => {
       const next = { ...prev };
@@ -2879,6 +2949,7 @@ export default function App() {
     groupLocalScreenRef.current = null;
     setGroupCall({ groupId: null, status: "idle", participants: [], startedAt: null });
     setGroupShares({});
+    setGroupCallVisible(false);
   }
 
   async function startGroupScreenShare() {
@@ -2886,12 +2957,21 @@ export default function App() {
     const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     groupLocalScreenRef.current = display;
     const track = display.getVideoTracks()[0];
+    const screenAudio = display.getAudioTracks()[0];
     groupPeersRef.current.forEach(async (entry) => {
       const sender = entry.pc.getSenders().find((s) => s.track && s.track.kind === "video");
       if (sender) {
         await sender.replaceTrack(track);
       } else {
         entry.pc.addTrack(track, display);
+      }
+      if (screenAudio) {
+        const audioSender = entry.pc.getSenders().find(
+          (s) => s.track && s.track.kind === "audio" && s.track.label === screenAudio.label
+        );
+        if (!audioSender) {
+          entry.pc.addTrack(screenAudio, display);
+        }
       }
     });
     setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
@@ -2901,6 +2981,52 @@ export default function App() {
   async function stopGroupScreenShare() {
     groupLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     groupLocalScreenRef.current = null;
+    setScreenShareWindow((prev) => ({ ...prev, open: false }));
+  }
+
+  async function startDmScreenShare() {
+    if (!pcRef.current || !callState.withUserId) return;
+    try {
+      const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      dmLocalScreenRef.current = display;
+      const videoTrack = display.getVideoTracks()[0];
+      if (videoTrack) {
+        let sender = dmScreenVideoSenderRef.current || pcRef.current.getSenders().find((s) => s.track?.kind === "video");
+        if (sender) {
+          await sender.replaceTrack(videoTrack);
+        } else {
+          sender = pcRef.current.addTrack(videoTrack, display);
+        }
+        dmScreenVideoSenderRef.current = sender;
+      }
+      const audioTrack = display.getAudioTracks()[0];
+      if (audioTrack) {
+        let sender = dmScreenAudioSenderRef.current;
+        if (sender) {
+          await sender.replaceTrack(audioTrack);
+        } else {
+          sender = pcRef.current.addTrack(audioTrack, display);
+        }
+        dmScreenAudioSenderRef.current = sender;
+      }
+      setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
+      videoTrack.onended = () => stopDmScreenShare();
+    } catch {
+      // ignore
+    }
+  }
+
+  function stopDmScreenShare() {
+    dmLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
+    dmLocalScreenRef.current = null;
+    if (pcRef.current && dmScreenVideoSenderRef.current) {
+      pcRef.current.removeTrack(dmScreenVideoSenderRef.current);
+    }
+    if (pcRef.current && dmScreenAudioSenderRef.current) {
+      pcRef.current.removeTrack(dmScreenAudioSenderRef.current);
+    }
+    dmScreenVideoSenderRef.current = null;
+    dmScreenAudioSenderRef.current = null;
     setScreenShareWindow((prev) => ({ ...prev, open: false }));
   }
 
@@ -7826,6 +7952,9 @@ export default function App() {
                   </svg>
                 </button>
               </div>
+              <button className="xp-button" onClick={dmLocalScreenRef.current ? stopDmScreenShare : startDmScreenShare}>
+                {dmLocalScreenRef.current ? "Stop Share" : "Share Screen"}
+              </button>
               <button className="xp-button" onClick={endCall}>End</button>
             </div>
             {callSettingsOpen && (
@@ -7929,7 +8058,7 @@ export default function App() {
           </div>
         </div>
       )}
-      {(groupCall.status === "ringing" || groupCall.status === "in-call") && (
+      {groupCallVisible && (groupCall.status === "ringing" || groupCall.status === "in-call") && (
         <div className="xp-modal-overlay xp-call-overlay">
           <div className="xp-modal xp-call-modal" onClick={(e) => e.stopPropagation()}>
           <div className="xp-modal-title">
@@ -7959,15 +8088,22 @@ export default function App() {
                 ))}
             </div>
             <div className="xp-call-duration">{formatDuration(groupCallDuration)}</div>
-            <div className="xp-call-actions">
-              <button className="xp-button" onClick={startGroupScreenShare}>Share Screen</button>
-              <button className="xp-button xp-icon-btn" type="button" onClick={() => setCallSettingsOpen((p) => !p)}>
-                <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
-                  <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" />
-                </svg>
-              </button>
-              <button className="xp-button" onClick={leaveGroupCall}>Leave</button>
-            </div>
+            {groupCall.status === "ringing" ? (
+              <div className="xp-call-actions">
+                <button className="xp-button" onClick={() => joinGroupCall(groupCall.groupId)}>Join</button>
+                <button className="xp-button" onClick={() => setGroupCallVisible(false)}>Ignore</button>
+              </div>
+            ) : (
+              <div className="xp-call-actions">
+                <button className="xp-button" onClick={startGroupScreenShare}>Share Screen</button>
+                <button className="xp-button xp-icon-btn" type="button" onClick={() => setCallSettingsOpen((p) => !p)}>
+                  <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+                    <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                </button>
+                <button className="xp-button" onClick={leaveGroupCall}>Leave</button>
+              </div>
+            )}
             {callSettingsOpen && (
               <div className="xp-call-settings">
                 <div className="xp-call-select">
@@ -8167,10 +8303,20 @@ export default function App() {
             {groupLocalScreenRef.current && (
               <video srcObject={groupLocalScreenRef.current} autoPlay muted playsInline />
             )}
-            {groupShareEntries.map((entry) => (
+            {dmLocalScreenRef.current && (
+              <video srcObject={dmLocalScreenRef.current} autoPlay muted playsInline />
+            )}
+            {screenShareEntries.map((entry) => (
               <div key={entry.id} className="xp-share-tile">
                 <div className="xp-share-label">{entry.name}</div>
-                <video srcObject={entry.stream} autoPlay muted playsInline />
+                <video
+                  srcObject={entry.stream}
+                  autoPlay
+                  playsInline
+                  onLoadedMetadata={(e) => {
+                    e.currentTarget.volume = callSettings.speakerVolume ?? 1;
+                  }}
+                />
               </div>
             ))}
           </div>
