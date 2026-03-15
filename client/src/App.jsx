@@ -61,7 +61,8 @@ const defaultAvatar = (name) => {
 
 const avatarUrl = (avatar, fallbackName) => {
   if (!avatar || avatar === "null" || avatar === "undefined") return defaultAvatar(fallbackName);
-  return avatar;
+  if (avatar.startsWith("http") || avatar.startsWith("data:") || avatar.startsWith("blob:")) return avatar;
+  return resolveMediaUrl(avatar);
 };
 
 const onAvatarError = (event, fallbackName) => {
