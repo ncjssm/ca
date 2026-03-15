@@ -13,7 +13,7 @@ import websiteIcon from "./assets/connections/website.png";
 import xIcon from "./assets/connections/x.png";
 import youtubeIcon from "./assets/connections/youtube.png";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
 const STORY_IMAGE_MS = 3500;
 const STORY_VIDEO_MS = 4500;
 const MAX_CUSTOM_STATUS = 23;

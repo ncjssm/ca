@@ -1,0 +1,21 @@
+[build]
+  base = "client"
+  publish = "client/dist"
+  command = "npm install && npm run build"
+
+[[redirects]]
+  from = "/api/*"
+  to = "https://spirited-achievement-production-0db7.up.railway.app/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/socket.io/*"
+  to = "https://spirited-achievement-production-0db7.up.railway.app/socket.io/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
