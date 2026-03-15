@@ -593,6 +593,7 @@ export default function App() {
   const [groupCallVisible, setGroupCallVisible] = useState(true);
   const [screenShareWindow, setScreenShareWindow] = useState({ open: false, label: "" });
   const [screenShareError, setScreenShareError] = useState("");
+  const [dmShareActive, setDmShareActive] = useState(false);
 
   const socketRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -2878,6 +2879,7 @@ export default function App() {
     setDmShareStream(null);
     setScreenShareError("");
     setScreenShareWindow((prev) => ({ ...prev, open: false }));
+    setDmShareActive(false);
     remoteStreamRef.current = null;
   }
 
@@ -3039,24 +3041,27 @@ export default function App() {
   }
 
   async function startDmScreenShare() {
-    if (!pcRef.current || !callState.withUserId) return;
+    if (!callState.withUserId) return;
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       setScreenShareError("");
       dmLocalScreenRef.current = display;
+      setDmShareActive(true);
       const videoTrack = display.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.contentHint = "detail";
-        let sender = dmScreenVideoSenderRef.current || pcRef.current.getSenders().find((s) => s.track?.kind === "video");
-        if (sender) {
-          await sender.replaceTrack(videoTrack);
-        } else {
-          sender = pcRef.current.addTrack(videoTrack, display);
+        if (pcRef.current) {
+          let sender = dmScreenVideoSenderRef.current || pcRef.current.getSenders().find((s) => s.track?.kind === "video");
+          if (sender) {
+            await sender.replaceTrack(videoTrack);
+          } else {
+            sender = pcRef.current.addTrack(videoTrack, display);
+          }
+          dmScreenVideoSenderRef.current = sender;
         }
-        dmScreenVideoSenderRef.current = sender;
       }
       const audioTrack = display.getAudioTracks()[0];
-      if (audioTrack) {
+      if (audioTrack && pcRef.current) {
         let sender = dmScreenAudioSenderRef.current;
         if (sender) {
           await sender.replaceTrack(audioTrack);
@@ -3067,7 +3072,9 @@ export default function App() {
       }
       setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
       videoTrack.onended = () => stopDmScreenShare();
-      await createOffer(callState.withUserId);
+      if (pcRef.current) {
+        await createOffer(callState.withUserId);
+      }
     } catch {
       setScreenShareError("Screen share permission denied or unavailable.");
     }
@@ -3076,6 +3083,7 @@ export default function App() {
   function stopDmScreenShare() {
     dmLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     dmLocalScreenRef.current = null;
+    setDmShareActive(false);
     if (pcRef.current && dmScreenVideoSenderRef.current) {
       pcRef.current.removeTrack(dmScreenVideoSenderRef.current);
     }
@@ -8203,8 +8211,8 @@ export default function App() {
                   </svg>
                 </button>
               </div>
-              <button className="xp-button" onClick={dmLocalScreenRef.current ? stopDmScreenShare : startDmScreenShare}>
-                {dmLocalScreenRef.current ? "Stop Share" : "Share Screen"}
+              <button className="xp-button" onClick={dmShareActive ? stopDmScreenShare : startDmScreenShare}>
+                {dmShareActive ? "Stop Share" : "Share Screen"}
               </button>
               <button className="xp-button" onClick={endCall}>End</button>
             </div>
