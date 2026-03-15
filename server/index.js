@@ -2954,6 +2954,7 @@ io.on("connection", (socket) => {
       startedAt,
       timerId: null,
       joined: true,
+      participants: new Set([pending.callerId, pending.calleeId]),
     });
     // Start message already sent on call request.
     emitCallActive(pending.callerId, pending.calleeId, startedAt);
@@ -3023,6 +3024,9 @@ io.on("connection", (socket) => {
       return;
     }
     session.joined = true;
+    if (session.participants) {
+      session.participants.add(userId);
+    }
     if (session.timerId) {
       clearTimeout(session.timerId);
       session.timerId = null;
@@ -3040,6 +3044,15 @@ io.on("connection", (socket) => {
     const { toId } = payload || {};
     const otherId = toId || activeCalls.get(userId);
     if (!otherId) return;
+    const key = callKey(userId, otherId);
+    const session = callSessions.get(key);
+    if (session?.participants) {
+      session.participants.delete(userId);
+      if (session.participants.size === 0) {
+        endCallSession(userId, otherId);
+        return;
+      }
+    }
     io.to(`user:${otherId}`).emit("call:left", { otherId: userId });
   });
 
