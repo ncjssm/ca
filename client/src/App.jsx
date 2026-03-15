@@ -425,6 +425,7 @@ export default function App() {
   const [showBioEmoji, setShowBioEmoji] = useState(false);
   const [audioMeta, setAudioMeta] = useState({});
   const [audioPreview, setAudioPreview] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordElapsed, setRecordElapsed] = useState(0);
   const [recordSlideOffset, setRecordSlideOffset] = useState(0);
@@ -3293,8 +3294,22 @@ export default function App() {
       socketRef.current?.emit("group:send", { groupId: selectedChat.id, type: "image", imageUrl, body: "" });
     }
     addOptimisticMessage({ type: "image", image_url: imageUrl, body: "" });
+    clearImagePreview();
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
+  }
+
+  function setImagePreviewFromFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setImagePreview({ file, url, name: file.name });
+  }
+
+  function clearImagePreview() {
+    if (imagePreview?.url) {
+      URL.revokeObjectURL(imagePreview.url);
+    }
+    setImagePreview(null);
   }
 
   async function sendAudio(file) {
@@ -3329,7 +3344,7 @@ export default function App() {
         const file = item.getAsFile();
         if (file) {
           event.preventDefault();
-          sendImage(file);
+          setImagePreviewFromFile(file);
         }
         break;
       }
@@ -5855,7 +5870,25 @@ export default function App() {
                 </div>
               )}
               {selectedChat && (
-                  <div className="xp-chat-input">
+                <div className="xp-chat-input">
+                    {imagePreview && (
+                      <div className="xp-image-preview">
+                        <img src={imagePreview.url} alt="" />
+                        <div className="xp-image-actions">
+                          <button
+                            className="xp-button"
+                            onClick={async () => {
+                              await sendImage(imagePreview.file);
+                            }}
+                          >
+                            Send
+                          </button>
+                          <button className="xp-button" onClick={clearImagePreview}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
                     {audioPreview && (
                       <div className="xp-audio-preview">
                         <audio src={audioPreview.url} controls />
@@ -5911,6 +5944,10 @@ export default function App() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
+                            if (imagePreview && !messageInput.trim()) {
+                              sendImage(imagePreview.file);
+                              return;
+                            }
                             sendMessage();
                           }
                         }}

@@ -4918,6 +4918,29 @@ body {
   gap: 8px;
 }
 
+.xp-image-preview {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--xp-border);
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.xp-image-preview img {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border: 1px solid var(--xp-border);
+  border-radius: 4px;
+}
+
+.xp-image-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .xp-chat-input input {
   flex: 1;
   padding: 6px 8px;
