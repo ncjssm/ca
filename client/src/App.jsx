@@ -6315,7 +6315,7 @@ export default function App() {
           <button className="xp-context-item" onClick={() => loadProfile(groupMemberMenu.memberId)}>
             View profile
           </button>
-          {selectedGroup.owner_id === user.id && (
+          {selectedGroup.owner_id === user.id && groupMemberMenu.memberId !== user.id && (
             <>
               <button
                 className="xp-context-item"
