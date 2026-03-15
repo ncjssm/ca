@@ -3270,8 +3270,8 @@ app.use(express.static(path.join(__dirname, "public")));
 const port = process.env.PORT || 3001;
 async function main() {
   await initDb();
-  server.listen(port, () => {
-    console.log(`Server listening on http://localhost:${port}`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Server listening on port ${port}`);
   });
 }
 
