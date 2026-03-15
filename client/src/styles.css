@@ -6732,6 +6732,14 @@ body {
     border-radius: 0;
   }
 
+  .app-body.settings {
+    grid-template-columns: 1fr;
+  }
+
+  .app-body.settings .xp-sidebar {
+    order: 2;
+  }
+
   .xp-sidebar {
     padding: 10px;
   }
