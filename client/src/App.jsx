@@ -4215,13 +4215,19 @@ export default function App() {
 
   async function transferAlias(username, toUsername, password) {
     setAliasTransfering(true);
-    await apiFetch("/api/usernames/transfer", {
-      method: "POST",
-      body: JSON.stringify({ username, toUsername, password }),
-    });
-    await new Promise((r) => setTimeout(r, 280));
-    await loadUsernames();
-    setAliasTransfering(false);
+    try {
+      await apiFetch("/api/usernames/transfer", {
+        method: "POST",
+        body: JSON.stringify({ username, toUsername, password }),
+      });
+      await new Promise((r) => setTimeout(r, 280));
+      await loadUsernames();
+      setTransferModal(null);
+    } catch (err) {
+      setPrimaryError(err.message || "Transfer failed");
+    } finally {
+      setAliasTransfering(false);
+    }
   }
 
   async function acceptTransfer(id) {
