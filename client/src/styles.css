@@ -5064,6 +5064,10 @@ body {
     0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
+.xp-settings-back {
+  display: none;
+}
+
 .xp-settings-identity {
   display: flex;
   align-items: center;
@@ -6768,6 +6772,12 @@ body {
 
   .xp-chat-body {
     padding: 12px;
+  }
+
+  .xp-settings-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
 
   .xp-chat-input {

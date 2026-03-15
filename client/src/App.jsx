@@ -4836,6 +4836,9 @@ export default function App() {
             {view === "settings" ? (
               <div className="xp-settings-panel">
                 <div className="xp-settings-header">
+                  <button className="xp-button xp-settings-back" onClick={() => setView("chat")}>
+                    Back
+                  </button>
                   <span>Settings</span>
                 </div>
                 <div className="xp-settings-grid">
