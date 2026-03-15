@@ -262,14 +262,26 @@ function getDmOverlay(bg) {
   return "rgba(255, 255, 255, 0.65)";
 }
 
-  function mergeMessages(prev, message) {
-    if (!message) return prev;
+function mergeMessages(prev, message) {
+  if (!message) return prev;
   const existing = prev.find((m) => m.id === message.id);
   if (existing) {
     return prev.map((m) => (m.id === message.id ? { ...m, ...message } : m));
   }
-    return [...prev, message];
-  }
+  return [...prev, message];
+}
+
+function matchPending(prev, message) {
+  if (!message) return -1;
+  return prev.findIndex(
+    (m) =>
+      m.pending &&
+      m.type === message.type &&
+      (m.body || "") === (message.body || "") &&
+      (m.image_url || "") === (message.image_url || "") &&
+      (m.audio_url || "") === (message.audio_url || "")
+  );
+}
 
 function getMessagePreview(msg) {
   if (!msg) return "";
@@ -920,10 +932,16 @@ export default function App() {
 
     socket.on("dm:new", (message) => {
       const key = chatKey("dm", message.sender_id === user.id ? message.recipient_id : message.sender_id);
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [key]: mergeMessages(prev[key] || [], message),
-      }));
+      setMessagesByChat((prev) => {
+        const list = prev[key] || [];
+        const pendingIndex = message.sender_id === user.id ? matchPending(list, message) : -1;
+        if (pendingIndex !== -1) {
+          const next = [...list];
+          next[pendingIndex] = message;
+          return { ...prev, [key]: next };
+        }
+        return { ...prev, [key]: mergeMessages(list, message) };
+      });
       if (message.sender_id !== user.id) {
         if (!isChatMutedValue(key)) {
           markChatUnread(key);
@@ -1017,10 +1035,16 @@ export default function App() {
 
     socket.on("group:new", (message) => {
       const key = chatKey("group", message.group_id);
-      setMessagesByChat((prev) => ({
-        ...prev,
-        [key]: mergeMessages(prev[key] || [], message),
-      }));
+      setMessagesByChat((prev) => {
+        const list = prev[key] || [];
+        const pendingIndex = message.sender_id === user.id ? matchPending(list, message) : -1;
+        if (pendingIndex !== -1) {
+          const next = [...list];
+          next[pendingIndex] = message;
+          return { ...prev, [key]: next };
+        }
+        return { ...prev, [key]: mergeMessages(list, message) };
+      });
       if (message.sender_id !== user.id) {
         if (!isChatMutedValue(key)) {
           markChatUnread(key);
@@ -3172,6 +3196,29 @@ export default function App() {
     }, 1200);
   }
 
+  function addOptimisticMessage(payload) {
+    if (!selectedChat || !user) return;
+    const now = new Date().toISOString();
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const base = {
+      id: tempId,
+      sender_id: user.id,
+      created_at: now,
+      is_system: false,
+      pending: true,
+      ...payload,
+    };
+    const key = chatKey(selectedChat.type, selectedChat.id);
+    const message =
+      selectedChat.type === "dm"
+        ? { ...base, recipient_id: selectedChat.id }
+        : { ...base, group_id: selectedChat.id };
+    setMessagesByChat((prev) => ({
+      ...prev,
+      [key]: [...(prev[key] || []), message],
+    }));
+  }
+
   async function sendMessage() {
     if (!selectedChat || !socketRef.current) return;
     const trimmed = messageInput.trim();
@@ -3182,6 +3229,7 @@ export default function App() {
     } else {
       socketRef.current.emit("group:send", { groupId: selectedChat.id, body: trimmed, type: "text" });
     }
+    addOptimisticMessage({ type: "text", body: trimmed });
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
     setMessageInput("");
@@ -3209,6 +3257,7 @@ export default function App() {
     } else {
       socketRef.current?.emit("group:send", { groupId: selectedChat.id, type: "image", imageUrl, body: "" });
     }
+    addOptimisticMessage({ type: "image", image_url: imageUrl, body: "" });
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
   }
@@ -3231,6 +3280,7 @@ export default function App() {
     } else {
       socketRef.current?.emit("group:send", { groupId: selectedChat.id, type: "audio", audioUrl, body: "" });
     }
+    addOptimisticMessage({ type: "audio", audio_url: audioUrl, body: "" });
     clearAudioPreview();
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
@@ -4185,6 +4235,7 @@ export default function App() {
   }
 
   function openMessageMenu(event, message) {
+    if (message?.pending) return;
     event.preventDefault();
     setReactionPickerFor(null);
     setShowMessageMenu({ x: event.clientX, y: event.clientY, message });
@@ -5460,7 +5511,7 @@ export default function App() {
                         </div>
                       )}
                       <div
-                        className={`xp-message ${msg.sender_id === user.id ? "outgoing" : ""} ${msg.is_system ? "system" : ""} ${showAvatar ? "" : "grouped"} ${deletingMessageIds[msg.id] ? "deleting" : ""}`}
+                        className={`xp-message ${msg.sender_id === user.id ? "outgoing" : ""} ${msg.is_system ? "system" : ""} ${showAvatar ? "" : "grouped"} ${deletingMessageIds[msg.id] ? "deleting" : ""} ${msg.pending ? "pending" : ""}`}
                         onContextMenu={(e) => openMessageMenu(e, msg)}
                         onTouchStart={(e) => handleMessageLongPressStart(e, msg)}
                         onTouchMove={handleMessageLongPressMove}
