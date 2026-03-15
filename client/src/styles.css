@@ -6789,15 +6789,6 @@ body {
   }
 
 
-  input,
-  textarea,
-  select,
-  .xp-textarea,
-  .xp-message-edit-input,
-  .xp-titlebar-search,
-  .xp-chat-input input {
-    font-size: 16px !important;
-  }
 
   .xp-call-modal {
     width: min(92vw, 320px);
