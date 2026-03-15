@@ -16,7 +16,7 @@ import youtubeIcon from "./assets/connections/youtube.png";
 const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
 const STORY_IMAGE_MS = 3500;
 const STORY_VIDEO_MS = 4500;
-const MAX_CUSTOM_STATUS = 23;
+const MAX_CUSTOM_STATUS = 13;
 const MAX_BIO = 190;
 const USERNAME_MIN = 3;
 const USERNAME_MAX = 14;

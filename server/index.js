@@ -1291,10 +1291,10 @@ app.patch("/api/settings", requireAuth, async (req, res) => {
   }
   if (customStatus !== undefined) {
     const trimmed = String(customStatus || "").trim();
-    if (trimmed.length > 23) {
+    if (trimmed.length > 13) {
       return res
         .status(400)
-        .json({ error: "Custom status must be 23 characters or fewer" });
+        .json({ error: "Custom status must be 13 characters or fewer" });
     }
     run("UPDATE users SET custom_status = ? WHERE id = ?", [
       trimmed || null,
