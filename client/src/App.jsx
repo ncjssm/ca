@@ -4563,48 +4563,48 @@ export default function App() {
                       +
                     </button>
                   </div>
-                  {settings.customStatus && (
-                    <div className={`xp-custom-status ${customStatusAnim}`}>Current status: {settings.customStatus}</div>
-                  )}
+                  <div className="xp-status-row xp-status-stack">
+                    <span className="xp-status-dot" style={{ backgroundColor: getStatusColor(settings.status) }} />
+                    <span
+                      className="xp-status"
+                      style={{ color: getStatusColor(settings.status) }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStatusMenuOpen((prev) => !prev);
+                      }}
+                    >
+                      {getStatusLabel(settings.status)}
+                    </span>
+                    <button
+                      className="xp-status-toggle"
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStatusMenuOpen((prev) => !prev);
+                      }}
+                    >
+                      <span className="xp-status-arrow">&#9662;</span>
+                    </button>
+                    {statusMenuOpen && (
+                      <div className="xp-status-menu" onClick={(e) => e.stopPropagation()}>
+                        {STATUS_OPTIONS.map((s) => (
+                          <button
+                            key={s.value}
+                            className="xp-status-option"
+                            onClick={() => changeStatus(s.value)}
+                          >
+                            <span className="xp-status-dot" style={{ backgroundColor: s.color }} />
+                            {s.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="xp-username">@{settings.username}</div>
-                <div className="xp-status-row xp-status-stack">
-                  <span className="xp-status-dot" style={{ backgroundColor: getStatusColor(settings.status) }} />
-                  <span
-                    className="xp-status"
-                    style={{ color: getStatusColor(settings.status) }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setStatusMenuOpen((prev) => !prev);
-                    }}
-                  >
-                    {getStatusLabel(settings.status)}
-                  </span>
-                  <button
-                    className="xp-status-toggle"
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setStatusMenuOpen((prev) => !prev);
-                    }}
-                  >
-                    <span className="xp-status-arrow">&#9662;</span>
-                  </button>
-                  {statusMenuOpen && (
-                    <div className="xp-status-menu" onClick={(e) => e.stopPropagation()}>
-                      {STATUS_OPTIONS.map((s) => (
-                        <button
-                          key={s.value}
-                          className="xp-status-option"
-                          onClick={() => changeStatus(s.value)}
-                        >
-                          <span className="xp-status-dot" style={{ backgroundColor: s.color }} />
-                          {s.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {settings.customStatus && (
+                  <div className={`xp-custom-status ${customStatusAnim}`}>Current status: {settings.customStatus}</div>
+                )}
               </div>
               <input
                 ref={storyInputRef}

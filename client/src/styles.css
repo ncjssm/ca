@@ -816,7 +816,7 @@ body {
 
 .xp-avatar-status-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
 }
 
@@ -848,6 +848,11 @@ body {
 
 .xp-profile-left .xp-username {
   font-size: 0.9rem;
+}
+
+.xp-profile-left .xp-custom-status {
+  font-size: 0.8rem;
+  color: var(--xp-muted);
 }
 
 .xp-custom-status {
