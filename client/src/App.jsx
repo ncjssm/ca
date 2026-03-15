@@ -6043,28 +6043,30 @@ export default function App() {
               </div>
               <div className="xp-chat-profile-body">
                 <div className="xp-chat-profile-card">
-                  <div className="xp-chat-profile-avatar-wrap">
-                    <img
-                      className="xp-chat-profile-avatar"
-                      src={avatarUrl(selectedFriend.avatar, selectedFriend.username)}
-                      alt=""
-                      onError={(e) => onAvatarError(e, selectedFriend.username)}
-                    />
-                    <span
-                      className="xp-status-bubble"
-                      style={{ backgroundColor: getStatusColor(selectedFriend.status || "offline") }}
-                      title={getStatusLabel(selectedFriend.status || "offline")}
-                    />
+                  <div className="xp-chat-profile-avatar-row">
+                    <div className="xp-chat-profile-avatar-wrap">
+                      <img
+                        className="xp-chat-profile-avatar"
+                        src={avatarUrl(selectedFriend.avatar, selectedFriend.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, selectedFriend.username)}
+                      />
+                      <span
+                        className="xp-status-bubble"
+                        style={{ backgroundColor: getStatusColor(selectedFriend.status || "offline") }}
+                        title={getStatusLabel(selectedFriend.status || "offline")}
+                      />
+                    </div>
+                    {(selectedFriend.custom_status || customStatusById[selectedFriend.id]) && (
+                      <div className="xp-chat-profile-bubble">
+                        Current status: {selectedFriend.custom_status || customStatusById[selectedFriend.id]}
+                      </div>
+                    )}
                   </div>
                   <div className="xp-chat-profile-username">@{selectedFriend.username}</div>
                   <div className="xp-chat-profile-display">
                     {nicknameMap[selectedFriend.id] || selectedFriend.display_name || selectedFriend.username}
                   </div>
-                  {(selectedFriend.custom_status || customStatusById[selectedFriend.id]) && (
-                    <div className="xp-chat-profile-custom">
-                      {selectedFriend.custom_status || customStatusById[selectedFriend.id]}
-                    </div>
-                  )}
                 </div>
                 {selectedFriend.created_at && (
                   <div className="xp-chat-profile-card">
