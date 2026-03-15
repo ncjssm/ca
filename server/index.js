@@ -20,9 +20,12 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 const server = http.createServer(app);
+const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+const DEV_CLIENT_URL = "http://localhost:5173";
+const allowedOrigins = [CLIENT_URL, DEV_CLIENT_URL].filter(Boolean);
 const io = new SocketServer(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: allowedOrigins,
     credentials: true,
   },
 });
@@ -36,7 +39,7 @@ const sessionMiddleware = session({
   saveUninitialized: false,
   cookie: {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: isProd ? "none" : "lax",
     secure: isProd,
     maxAge: 1000 * 60 * 60 * 24 * 7,
   },
@@ -49,7 +52,11 @@ app.use(
       ? {
           directives: {
             defaultSrc: ["'self'"],
-            connectSrc: ["'self'"],
+            connectSrc: [
+              "'self'",
+              CLIENT_URL,
+              CLIENT_URL.replace(/^http/, "ws"),
+            ],
             imgSrc: ["'self'", "data:", "blob:"],
             mediaSrc: ["'self'", "data:", "blob:"],
             styleSrc: ["'self'", "'unsafe-inline'"],
@@ -70,7 +77,11 @@ app.use(
 );
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );
