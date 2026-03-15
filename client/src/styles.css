@@ -6741,7 +6741,11 @@ body {
   }
 
   .app-body.settings .xp-sidebar {
-    order: 2;
+    display: none;
+  }
+
+  .app-body.settings .xp-chat {
+    grid-column: 1 / -1;
   }
 
   .xp-sidebar {
@@ -6782,6 +6786,30 @@ body {
 
   .xp-chat-input {
     padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .xp-theme-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .xp-theme-preview {
+    min-height: 96px;
+  }
+
+  .xp-theme-titlebar {
+    height: 12px;
+  }
+
+  .xp-theme-panel {
+    height: 22px;
+  }
+
+  .xp-theme-panel.small {
+    height: 14px;
+  }
+
+  .xp-theme-custom-preview {
+    height: 96px;
   }
 
   input,
