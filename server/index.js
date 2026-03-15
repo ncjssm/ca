@@ -229,7 +229,7 @@ const USERNAME_REMOVE_COOLDOWN_MS = 5 * 60 * 1000;
 const USERNAME_CLAIM_COOLDOWN_MS = 5 * 60 * 1000;
 const USERNAME_REGEX = /^[A-Za-z0-9_]+$/;
 const USERNAME_MIN = 3;
-const USERNAME_MAX = 20;
+const USERNAME_MAX = 14;
 const USERNAME_COOLDOWN_ACTIONS = [
   "add_alias",
   "remove_alias",

@@ -19,7 +19,7 @@ const STORY_VIDEO_MS = 4500;
 const MAX_CUSTOM_STATUS = 23;
 const MAX_BIO = 190;
 const USERNAME_MIN = 3;
-const USERNAME_MAX = 20;
+const USERNAME_MAX = 14;
 
 const STATUS_OPTIONS = [
   { value: "online", label: "Online", color: "#2a9d3f" },

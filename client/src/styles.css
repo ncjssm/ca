@@ -1644,6 +1644,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-width: 100%;
 }
 
 .xp-request {
@@ -1651,6 +1652,8 @@ body {
   grid-template-columns: 40px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+  min-width: 0;
+  width: 100%;
 }
 
 .xp-request-info {
@@ -1677,6 +1680,10 @@ body {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.xp-request-actions .xp-button {
+  white-space: nowrap;
 }
 
 .xp-user {
