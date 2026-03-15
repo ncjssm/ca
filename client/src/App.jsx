@@ -1257,6 +1257,15 @@ export default function App() {
       }));
     });
 
+    socket.on("group:call:timeout", ({ groupId }) => {
+      if (groupCall.groupId !== groupId) return;
+      setGroupCall((prev) => ({
+        ...prev,
+        status: "in-call",
+        participants: prev.participants.slice(0, 1),
+      }));
+    });
+
     socket.on("group:call:ended", ({ groupId }) => {
       if (groupCall.groupId === groupId) {
         setGroupCallVisible(false);

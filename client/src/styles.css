@@ -3136,6 +3136,7 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(64px, 1fr));
   gap: 10px;
   margin-bottom: 8px;
+  transition: all var(--xp-motion) ease;
 }
 
 .xp-call-avatar {

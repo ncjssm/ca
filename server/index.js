@@ -3113,15 +3113,7 @@ io.on("connection", (socket) => {
         if (current.participants.size > 1) return;
         if (current.missedNotified) return;
         current.missedNotified = true;
-        emitSystemGroupMessage(
-          groupId,
-          current.initiatorId,
-          `Missed call from @${caller?.username || "user"}`,
-          "call"
-        );
         io.to(`group:${groupId}`).emit("group:call:timeout", { groupId });
-        groupCalls.delete(groupId);
-        io.to(`group:${groupId}`).emit("group:call:ended", { groupId });
       }, 15000);
     }
     io.to(`group:${groupId}`).emit("group:call:ring", {
