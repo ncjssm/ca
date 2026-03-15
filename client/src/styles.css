@@ -2448,11 +2448,23 @@ body {
   overflow-y: auto;
 }
 
+.xp-group-members-header {
+  font-weight: 600;
+  color: var(--xp-title);
+}
+
 .xp-group-member {
   display: grid;
   grid-template-columns: 36px 1fr;
   gap: 8px;
   align-items: center;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
 }
 
 .xp-owner-crown {
@@ -2479,6 +2491,39 @@ body {
   box-shadow:
     inset 1px 1px 0 #ffffff,
     inset -1px -1px 0 #7f9db9;
+}
+
+.xp-group-members-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 9999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.xp-group-members-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 75vh;
+  background: var(--xp-panel);
+  border: 2px solid var(--xp-border-dark);
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  padding: 12px 14px 16px;
+  box-shadow: 0 -12px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xp-group-members-sheet-handle {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: #7f9db9;
+  align-self: center;
 }
 
 
@@ -4226,7 +4271,26 @@ body {
   background: #fff;
 }
 
+.xp-message-avatar-btn {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
 
+.xp-message-name {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0 0 4px;
+  color: var(--xp-blue);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
 
 .xp-message-avatar img {
   width: 100%;
@@ -5065,6 +5129,10 @@ body {
 }
 
 .xp-settings-back {
+  display: none;
+}
+
+.xp-chat-back {
   display: none;
 }
 
@@ -6748,6 +6816,30 @@ body {
     grid-column: 1 / -1;
   }
 
+  .app-body.mobile-chat {
+    grid-template-columns: 1fr;
+  }
+
+  .app-body.mobile-chat .xp-sidebar,
+  .app-body.mobile-chat .xp-group-sidebar,
+  .app-body.mobile-chat .xp-chat-profile-sidebar {
+    display: none;
+  }
+
+  .app-body.mobile-list {
+    grid-template-columns: 1fr;
+  }
+
+  .app-body.mobile-list .xp-chat,
+  .app-body.mobile-list .xp-group-sidebar,
+  .app-body.mobile-list .xp-chat-profile-sidebar {
+    display: none;
+  }
+
+  .xp-chat-profile-sidebar {
+    display: none;
+  }
+
   .xp-sidebar {
     padding: 10px;
   }
@@ -6779,6 +6871,12 @@ body {
   }
 
   .xp-settings-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .xp-chat-back {
     display: inline-flex;
     align-items: center;
     gap: 6px;

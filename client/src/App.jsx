@@ -338,6 +338,7 @@ export default function App() {
   const [sentPulseChat, setSentPulseChat] = useState(null);
   const sentPulseTimerRef = useRef(null);
   const [unreadChats, setUnreadChats] = useState({});
+  const mobileTouchRef = useRef({ x: 0, y: 0, active: false });
 
   const [friendSearch, setFriendSearch] = useState("");
   const [friendError, setFriendError] = useState("");
@@ -437,6 +438,7 @@ export default function App() {
   const [reactionPickerFor, setReactionPickerFor] = useState(null);
   const [showProfileMenu, setShowProfileMenu] = useState(null);
   const [groupMemberMenu, setGroupMemberMenu] = useState(null);
+  const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [removeFriendConfirm, setRemoveFriendConfirm] = useState(null);
@@ -453,6 +455,8 @@ export default function App() {
   const [forwardModal, setForwardModal] = useState(null);
   const [forwardTarget, setForwardTarget] = useState(null);
   const [forwardNote, setForwardNote] = useState("");
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 720);
+  const [mobileView, setMobileView] = useState("list");
   const [savingFlags, setSavingFlags] = useState({});
   const [avatarEditOpen, setAvatarEditOpen] = useState(false);
   const [avatarEditSrc, setAvatarEditSrc] = useState("");
@@ -1239,6 +1243,57 @@ export default function App() {
       socketRef.current = null;
     };
   }, [user]);
+
+  useEffect(() => {
+    function handleResize() {
+      setIsMobile(window.innerWidth <= 720);
+    }
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    if (selectedChat && view !== "settings") {
+      setMobileView("chat");
+    } else {
+      setMobileView("list");
+    }
+  }, [isMobile, selectedChat, view]);
+
+  useEffect(() => {
+    if (!isMobile || mobileView !== "chat") return;
+    const el = chatBodyRef.current;
+    if (!el) return;
+    const onStart = (e) => {
+      const touch = e.touches?.[0];
+      if (!touch) return;
+      mobileTouchRef.current = { x: touch.clientX, y: touch.clientY, active: true };
+    };
+    const onMove = (e) => {
+      if (!mobileTouchRef.current.active) return;
+      const touch = e.touches?.[0];
+      if (!touch) return;
+      const dx = touch.clientX - mobileTouchRef.current.x;
+      const dy = touch.clientY - mobileTouchRef.current.y;
+      if (dx > 80 && Math.abs(dy) < 60) {
+        mobileTouchRef.current.active = false;
+        backToList();
+      }
+    };
+    const onEnd = () => {
+      mobileTouchRef.current.active = false;
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: true });
+    el.addEventListener("touchend", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+    };
+  }, [isMobile, mobileView]);
 
   useEffect(() => {
     if (selectedChat?.type !== "dm") {
@@ -2489,6 +2544,13 @@ export default function App() {
     }
   }
 
+  function backToList() {
+    setSelectedChat(null);
+    setShowChatProfile(false);
+    setShowChatMenu(false);
+    setMobileView("list");
+  }
+
   function startCallDrag(e) {
     e.preventDefault();
     callDragRef.current.dragging = true;
@@ -2929,6 +2991,7 @@ export default function App() {
     setChatLoading(true);
     setSelectedChat({ type: "dm", id: userId });
     setShowChatProfile(true);
+    if (isMobile) setMobileView("chat");
     clearChatUnread(chatKey("dm", userId));
     setShowChatMenu(false);
     const key = chatKey("dm", userId);
@@ -2951,12 +3014,14 @@ export default function App() {
     ensureFriendCard(target);
     setView("chat");
     setShowChatMenu(false);
+    if (isMobile) setMobileView("chat");
     await selectDm(uid);
   }
 
   async function selectGroup(groupId) {
     setChatLoading(true);
     setSelectedChat({ type: "group", id: groupId });
+    if (isMobile) setMobileView("chat");
     clearChatUnread(chatKey("group", groupId));
     setShowChatMenu(false);
     const key = chatKey("group", groupId);
@@ -4468,7 +4533,10 @@ export default function App() {
         <div
           className={`xp-window-body app-body ${view === "settings" ? "settings" : ""} ${
             selectedChat?.type === "group" && view !== "settings" ? "xp-group" : ""
-          } ${showChatProfile && selectedChat?.type === "dm" ? "dm-profile" : ""}`}
+          } ${showChatProfile && selectedChat?.type === "dm" ? "dm-profile" : ""} ${
+            isMobile && view !== "settings" && mobileView === "chat" ? "mobile-chat" : ""
+          } ${isMobile && view !== "settings" && mobileView === "list" ? "mobile-list" : ""
+          }`}
         >
           <aside className="xp-sidebar">
             <div className="xp-profile">
@@ -5039,6 +5107,11 @@ export default function App() {
             ) : (
               <>
                 <div className="xp-chat-header">
+                  {isMobile && mobileView === "chat" && (
+                    <button className="xp-button xp-chat-back" type="button" onClick={backToList}>
+                      Back
+                    </button>
+                  )}
                   {selectedChat?.type === "dm" && selectedFriend && (
                     <div className="xp-chat-head-info" onClick={() => loadProfile(selectedFriend.id)}>
                       <img src={selectedFriend.avatar || defaultAvatar(selectedFriend.username)} alt="" />
@@ -5058,7 +5131,12 @@ export default function App() {
                     </div>
                   )}
                   {selectedChat?.type === "group" && selectedGroup && (
-                    <div className="xp-chat-head-info">
+                    <div
+                      className="xp-chat-head-info"
+                      onClick={() => {
+                        if (isMobile) setGroupMembersOpen((prev) => !prev);
+                      }}
+                    >
                       <div>
                         <div className="xp-chat-name">{selectedGroup.name}</div>
                         <div className="xp-chat-display">{selectedGroup.members?.length || 0} members</div>
@@ -5220,21 +5298,32 @@ export default function App() {
                         {!msg.is_system && (
                           <div className="xp-message-avatar">
                             {showAvatar && (
-                              <img
-                                src={
-                                  msg.sender_id === user.id
-                                    ? settings.avatar || defaultAvatar(user.username)
-                                    : selectedChat?.type === "dm"
-                                    ? selectedFriend?.avatar || defaultAvatar(selectedFriend?.username)
-                                    : selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.avatar ||
-                                      defaultAvatar(selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username)
-                                }
-                                alt=""
-                              />
+                              <button
+                                type="button"
+                                className="xp-message-avatar-btn"
+                                onClick={() => loadProfile(msg.sender_id)}
+                              >
+                                <img
+                                  src={
+                                    msg.sender_id === user.id
+                                      ? settings.avatar || defaultAvatar(user.username)
+                                      : selectedChat?.type === "dm"
+                                      ? selectedFriend?.avatar || defaultAvatar(selectedFriend?.username)
+                                      : selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.avatar ||
+                                        defaultAvatar(selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username)
+                                  }
+                                  alt=""
+                                />
+                              </button>
                             )}
                           </div>
                         )}
                         <div className="xp-message-content">
+                          {selectedChat?.type === "group" && showAvatar && !msg.is_system && msg.sender_id !== user.id && (
+                            <button className="xp-message-name" type="button" onClick={() => loadProfile(msg.sender_id)}>
+                              @{selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username || "user"}
+                            </button>
+                          )}
                           <div className={`xp-message-bubble ${msg.type === "audio" ? "audio" : ""}`}>
                             {(msg.forwarded_from_username || msg.forwarded_from_id) && (
                               <div className="xp-forwarded-label">
@@ -7956,6 +8045,65 @@ export default function App() {
               </div>
             )}
           </div>
+          </div>
+        </div>
+      )}
+
+      {groupMembersOpen && selectedGroup && (
+        <div className="xp-modal-overlay xp-group-members-overlay" onClick={() => setGroupMembersOpen(false)}>
+          <div
+            className="xp-group-members-sheet"
+            onClick={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              const touch = e.touches?.[0];
+              if (!touch) return;
+              mobileTouchRef.current = { x: touch.clientX, y: touch.clientY, active: true };
+            }}
+            onTouchMove={(e) => {
+              if (!mobileTouchRef.current.active) return;
+              const touch = e.touches?.[0];
+              if (!touch) return;
+              const dy = touch.clientY - mobileTouchRef.current.y;
+              if (dy > 80) {
+                mobileTouchRef.current.active = false;
+                setGroupMembersOpen(false);
+              }
+            }}
+            onTouchEnd={() => {
+              mobileTouchRef.current.active = false;
+            }}
+          >
+            <div className="xp-group-members-sheet-handle" />
+            <div className="xp-group-members-header">
+              Members {selectedGroup.members?.length || 0}/10
+            </div>
+            <div className="xp-group-members">
+              {(selectedGroup.members || []).map((m) => (
+                <button
+                  key={m.id}
+                  className="xp-group-member"
+                  onClick={() => loadProfile(m.id)}
+                >
+                  <img src={m.avatar || defaultAvatar(m.username)} alt="" />
+                  <div>
+                    <div className="xp-user-name">
+                      {m.display_name || m.username}
+                      {selectedGroup.owner_id === m.id && (
+                        <span className="xp-owner-crown" aria-label="Group owner">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M3 8l4 3 5-6 5 6 4-3v9H3V8z" fill="currentColor" />
+                            <rect x="4" y="17" width="16" height="3" rx="1" fill="currentColor" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                    {(m.custom_status || customStatusById[m.id]) && (
+                      <div className="xp-custom-status">{m.custom_status || customStatusById[m.id]}</div>
+                    )}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
