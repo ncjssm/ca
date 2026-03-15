@@ -3096,6 +3096,7 @@ io.on("connection", (socket) => {
         initiatorId: userId,
         answered: false,
         ringTimerId: null,
+        soloTimerId: null,
         missedNotified: false,
       });
       const caller = getOne("SELECT username FROM users WHERE id = ?", [userId]);
@@ -3119,6 +3120,8 @@ io.on("connection", (socket) => {
           "call"
         );
         io.to(`group:${groupId}`).emit("group:call:timeout", { groupId });
+        groupCalls.delete(groupId);
+        io.to(`group:${groupId}`).emit("group:call:ended", { groupId });
       }, 15000);
     }
     io.to(`group:${groupId}`).emit("group:call:ring", {
@@ -3146,6 +3149,39 @@ io.on("connection", (socket) => {
     if (userId !== call.initiatorId) {
       call.answered = true;
     }
+    if (call.soloTimerId) {
+      clearTimeout(call.soloTimerId);
+      call.soloTimerId = null;
+    }
+    if (call.participants.size === 1) {
+      call.soloTimerId = setTimeout(() => {
+        const current = groupCalls.get(groupId);
+        if (!current) return;
+        if (current.participants.size !== 1) return;
+        const caller = getOne("SELECT username FROM users WHERE id = ?", [
+          current.initiatorId,
+        ]);
+        if (current.answered) {
+          emitSystemGroupMessage(
+            groupId,
+            current.initiatorId,
+            `@${caller?.username || "user"} started a call that lasted ${formatCallDuration(
+              (Date.now() - current.startedAt) / 1000
+            )}`,
+            "call"
+          );
+        } else if (!current.missedNotified) {
+          emitSystemGroupMessage(
+            groupId,
+            current.initiatorId,
+            `Missed call from @${caller?.username || "user"}`,
+            "call"
+          );
+        }
+        groupCalls.delete(groupId);
+        io.to(`group:${groupId}`).emit("group:call:ended", { groupId });
+      }, 3 * 60 * 1000);
+    }
     const participants = Array.from(call.participants).filter((id) => id !== userId);
     io.to(`user:${userId}`).emit("group:call:participants", {
       groupId,
@@ -3169,9 +3205,45 @@ io.on("connection", (socket) => {
     if (!call) return;
     call.participants.delete(userId);
     io.to(`group:${groupId}`).emit("group:call:leave", { groupId, userId });
+    if (call.participants.size === 1) {
+      if (call.soloTimerId) clearTimeout(call.soloTimerId);
+      call.soloTimerId = setTimeout(() => {
+        const current = groupCalls.get(groupId);
+        if (!current) return;
+        if (current.participants.size !== 1) return;
+        const caller = getOne("SELECT username FROM users WHERE id = ?", [
+          current.initiatorId,
+        ]);
+        if (current.answered) {
+          emitSystemGroupMessage(
+            groupId,
+            current.initiatorId,
+            `@${caller?.username || "user"} started a call that lasted ${formatCallDuration(
+              (Date.now() - current.startedAt) / 1000
+            )}`,
+            "call"
+          );
+        } else if (!current.missedNotified) {
+          emitSystemGroupMessage(
+            groupId,
+            current.initiatorId,
+            `Missed call from @${caller?.username || "user"}`,
+            "call"
+          );
+        }
+        groupCalls.delete(groupId);
+        io.to(`group:${groupId}`).emit("group:call:ended", { groupId });
+      }, 3 * 60 * 1000);
+    } else if (call.soloTimerId) {
+      clearTimeout(call.soloTimerId);
+      call.soloTimerId = null;
+    }
     if (call.participants.size === 0) {
       if (call.ringTimerId) {
         clearTimeout(call.ringTimerId);
+      }
+      if (call.soloTimerId) {
+        clearTimeout(call.soloTimerId);
       }
       const caller = getOne("SELECT username FROM users WHERE id = ?", [
         call.initiatorId,
