@@ -816,15 +816,8 @@ body {
 
 .xp-avatar-status-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-}
-
-.xp-avatar-status-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
 }
 
 .xp-avatar-status-row .xp-custom-status {
