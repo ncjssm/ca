@@ -59,6 +59,17 @@ const defaultAvatar = (name) => {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 };
 
+const avatarUrl = (avatar, fallbackName) => {
+  if (!avatar || avatar === "null" || avatar === "undefined") return defaultAvatar(fallbackName);
+  return avatar;
+};
+
+const onAvatarError = (event, fallbackName) => {
+  if (!event?.currentTarget) return;
+  event.currentTarget.onerror = null;
+  event.currentTarget.src = defaultAvatar(fallbackName);
+};
+
 const defaultGroupAvatar = () => {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">
@@ -579,6 +590,7 @@ export default function App() {
   const [dmShareStream, setDmShareStream] = useState(null);
   const [groupCallVisible, setGroupCallVisible] = useState(true);
   const [screenShareWindow, setScreenShareWindow] = useState({ open: false, label: "" });
+  const [screenShareError, setScreenShareError] = useState("");
 
   const socketRef = useRef(null);
   const typingTimeoutRef = useRef(null);
@@ -1795,10 +1807,7 @@ export default function App() {
               }
               constructor() {
                 super();
-                this.buffer = new Float32Array(16384);
-                this.writeIndex = 0;
-                this.readIndex = 0;
-                this.delay = 4096;
+                this.phase = 0;
               }
               process(inputs, outputs, parameters) {
                 const input = inputs[0];
@@ -1812,21 +1821,16 @@ export default function App() {
                 const outR = output[1] || output[0];
                 const len = outL.length;
                 for (let i = 0; i < len; i++) {
-                  this.buffer[this.writeIndex] = inL[i];
-                  this.writeIndex = (this.writeIndex + 1) % this.buffer.length;
-                  if (this.readIndex === this.writeIndex) {
-                    this.readIndex = (this.readIndex + this.delay) % this.buffer.length;
-                  }
-                  const idx = Math.floor(this.readIndex);
-                  const idx2 = (idx + 1) % this.buffer.length;
-                  const frac = this.readIndex - idx;
-                  const s0 = this.buffer[idx] || 0;
-                  const s1 = this.buffer[idx2] || 0;
+                  const idx = Math.floor(this.phase) % inL.length;
+                  const idx2 = (idx + 1) % inL.length;
+                  const frac = this.phase - Math.floor(this.phase);
+                  const s0 = inL[idx] || 0;
+                  const s1 = inL[idx2] || 0;
                   const sample = s0 * (1 - frac) + s1 * frac;
                   outL[i] = sample;
                   outR[i] = sample;
-                  this.readIndex += rate;
-                  if (this.readIndex >= this.buffer.length) this.readIndex -= this.buffer.length;
+                  this.phase += rate;
+                  if (this.phase >= inL.length) this.phase -= inL.length;
                 }
                 return true;
               }
@@ -2456,6 +2460,12 @@ export default function App() {
       }
     };
 
+    pc.onnegotiationneeded = () => {
+      if (callStateRef.current?.withUserId) {
+        createOffer(callStateRef.current.withUserId);
+      }
+    };
+
     pc.ontrack = (event) => {
       if (event.track.kind === "audio") {
         let stream = remoteStreamRef.current;
@@ -2806,12 +2816,6 @@ export default function App() {
   }, [voiceEffect, pitchShift, eqLow, eqMid, eqHigh, echoCancel, callState.status, callState.withUserId]);
 
   useEffect(() => {
-    if (pitchShift !== 0 && voiceEffect === "none") {
-      setVoiceEffect("pitch");
-    }
-  }, [pitchShift, voiceEffect]);
-
-  useEffect(() => {
     if (!pushToTalk || (callState.status !== "in-call" && callState.status !== "active")) return;
     const tracks = localStreamRef.current?.getAudioTracks?.() || [];
     if (!pttActive) {
@@ -2870,6 +2874,8 @@ export default function App() {
     dmScreenVideoSenderRef.current = null;
     dmScreenAudioSenderRef.current = null;
     setDmShareStream(null);
+    setScreenShareError("");
+    setScreenShareWindow((prev) => ({ ...prev, open: false }));
     remoteStreamRef.current = null;
   }
 
@@ -2900,6 +2906,12 @@ export default function App() {
       if (event.candidate) {
         socketRef.current?.emit("group:call:ice", { groupId, toId: peerId, candidate: event.candidate });
       }
+    };
+
+    pc.onnegotiationneeded = async () => {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socketRef.current?.emit("group:call:offer", { groupId, toId: peerId, offer });
     };
 
     pc.ontrack = (event) => {
@@ -2974,47 +2986,65 @@ export default function App() {
     setGroupCall({ groupId: null, status: "idle", participants: [], startedAt: null });
     setGroupShares({});
     setGroupCallVisible(false);
+    setScreenShareError("");
   }
 
   async function startGroupScreenShare() {
     if (!groupCall.groupId) return;
-    const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    groupLocalScreenRef.current = display;
-    const track = display.getVideoTracks()[0];
-    const screenAudio = display.getAudioTracks()[0];
-    groupPeersRef.current.forEach(async (entry) => {
-      const sender = entry.pc.getSenders().find((s) => s.track && s.track.kind === "video");
-      if (sender) {
-        await sender.replaceTrack(track);
-      } else {
-        entry.pc.addTrack(track, display);
-      }
-      if (screenAudio) {
-        const audioSender = entry.pc.getSenders().find(
-          (s) => s.track && s.track.kind === "audio" && s.track.label === screenAudio.label
-        );
-        if (!audioSender) {
-          entry.pc.addTrack(screenAudio, display);
+    try {
+      const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      setScreenShareError("");
+      groupLocalScreenRef.current = display;
+      const track = display.getVideoTracks()[0];
+      if (track) track.contentHint = "detail";
+      const screenAudio = display.getAudioTracks()[0];
+      groupPeersRef.current.forEach(async (entry, peerId) => {
+        const sender = entry.pc.getSenders().find((s) => s.track && s.track.kind === "video");
+        if (sender) {
+          await sender.replaceTrack(track);
+        } else {
+          entry.pc.addTrack(track, display);
         }
-      }
-    });
-    setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
-    track.onended = () => stopGroupScreenShare();
+        if (screenAudio) {
+          const audioSender = entry.pc.getSenders().find(
+            (s) => s.track && s.track.kind === "audio" && s.track.label === screenAudio.label
+          );
+          if (!audioSender) {
+            entry.pc.addTrack(screenAudio, display);
+          }
+        }
+        const offer = await entry.pc.createOffer();
+        await entry.pc.setLocalDescription(offer);
+        socketRef.current?.emit("group:call:offer", { groupId: groupCall.groupId, toId: peerId, offer });
+      });
+      setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
+      track.onended = () => stopGroupScreenShare();
+    } catch {
+      setScreenShareError("Screen share permission denied or unavailable.");
+    }
   }
 
   async function stopGroupScreenShare() {
     groupLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     groupLocalScreenRef.current = null;
     setScreenShareWindow((prev) => ({ ...prev, open: false }));
+    groupPeersRef.current.forEach(async (entry, peerId) => {
+      if (!entry?.pc) return;
+      const offer = await entry.pc.createOffer();
+      await entry.pc.setLocalDescription(offer);
+      socketRef.current?.emit("group:call:offer", { groupId: groupCall.groupId, toId: peerId, offer });
+    });
   }
 
   async function startDmScreenShare() {
     if (!pcRef.current || !callState.withUserId) return;
     try {
       const display = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      setScreenShareError("");
       dmLocalScreenRef.current = display;
       const videoTrack = display.getVideoTracks()[0];
       if (videoTrack) {
+        videoTrack.contentHint = "detail";
         let sender = dmScreenVideoSenderRef.current || pcRef.current.getSenders().find((s) => s.track?.kind === "video");
         if (sender) {
           await sender.replaceTrack(videoTrack);
@@ -3035,8 +3065,9 @@ export default function App() {
       }
       setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
       videoTrack.onended = () => stopDmScreenShare();
+      await createOffer(callState.withUserId);
     } catch {
-      // ignore
+      setScreenShareError("Screen share permission denied or unavailable.");
     }
   }
 
@@ -3052,6 +3083,9 @@ export default function App() {
     dmScreenVideoSenderRef.current = null;
     dmScreenAudioSenderRef.current = null;
     setScreenShareWindow((prev) => ({ ...prev, open: false }));
+    if (callState.withUserId) {
+      createOffer(callState.withUserId);
+    }
   }
 
   async function loadProfile(userId) {
@@ -3284,6 +3318,21 @@ export default function App() {
     clearAudioPreview();
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
+  }
+
+  function handlePasteImage(event) {
+    const items = event.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          event.preventDefault();
+          sendImage(file);
+        }
+        break;
+      }
+    }
   }
 
   function setAudioPreviewFromFile(file) {
@@ -3799,6 +3848,20 @@ export default function App() {
       body: JSON.stringify({ avatar: dataUrl }),
     });
     setSettings((prev) => ({ ...prev, avatar: dataUrl }));
+  }
+
+  async function resetAvatar() {
+    if (avatarApplying) return;
+    setAvatarApplying(true);
+    try {
+      await apiFetch("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ avatar: "" }),
+      });
+      setSettings((prev) => ({ ...prev, avatar: "" }));
+    } finally {
+      setTimeout(() => setAvatarApplying(false), 300);
+    }
   }
 
   function openAvatarEditor(file, target = { type: "user", groupId: null }) {
@@ -4779,7 +4842,11 @@ export default function App() {
                         }
                       }}
                     >
-                      <img src={settings.avatar || defaultAvatar(user.username)} alt="" />
+                      <img
+                        src={avatarUrl(settings.avatar, user.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, user.username)}
+                      />
                     </button>
                     <button
                       type="button"
@@ -4876,7 +4943,11 @@ export default function App() {
                         }}
                       >
                         {r.type === "dm" ? (
-                          <img src={r.avatar || defaultAvatar(r.sub?.slice(1))} alt="" />
+                      <img
+                        src={avatarUrl(r.avatar, r.sub?.slice(1))}
+                        alt=""
+                        onError={(e) => onAvatarError(e, r.sub?.slice(1))}
+                      />
                         ) : (
                           <div className="xp-search-icon">#</div>
                         )}
@@ -4989,7 +5060,11 @@ export default function App() {
                   <div className="xp-users-title">Requests</div>
                   {requests.map((r) => (
                     <div key={r.id} className="xp-request">
-                      <img src={r.avatar || defaultAvatar(r.username)} alt="" />
+                      <img
+                        src={avatarUrl(r.avatar, r.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, r.username)}
+                      />
                       <div className="xp-request-info">
                         <div className="xp-user-name">@{r.username}</div>
                         <div className="xp-user-display">{r.display_name || r.username}</div>
@@ -5022,7 +5097,11 @@ export default function App() {
                           openStoryByUserId(u.id);
                         }}
                       >
-                        <img src={u.avatar || defaultAvatar(u.username)} alt="" />
+                        <img
+                          src={avatarUrl(u.avatar, u.username)}
+                          alt=""
+                          onError={(e) => onAvatarError(e, u.username)}
+                        />
                       </button>
                     </div>
                     <div>
@@ -5076,7 +5155,11 @@ export default function App() {
                             checked={!!groupSelected[f.id]}
                             onChange={() => toggleGroupSelect(f.id)}
                           />
-                          <img src={f.avatar || defaultAvatar(f.username)} alt="" />
+                          <img
+                            src={avatarUrl(f.avatar, f.username)}
+                            alt=""
+                            onError={(e) => onAvatarError(e, f.username)}
+                          />
                           <span>@{f.username}</span>
                         </label>
                       ))}
@@ -5100,7 +5183,11 @@ export default function App() {
                           setGroupContextMenu({ x: e.clientX, y: e.clientY, group: g });
                         }}
                       >
-                      <img src={g.avatar || defaultGroupAvatar()} alt="" />
+                      <img
+                        src={g.avatar || defaultGroupAvatar()}
+                        alt=""
+                        onError={(e) => onAvatarError(e, g.name)}
+                      />
                       <div>
                         <div className="xp-user-name">{g.name}</div>
                         <div className="xp-user-display">
@@ -5144,11 +5231,18 @@ export default function App() {
                         className="xp-settings-avatar"
                         onClick={() => avatarInputRef.current?.click()}
                       >
-                        <img src={settings.avatar || defaultAvatar(settings.username)} alt="" />
+                        <img
+                          src={avatarUrl(settings.avatar, settings.username)}
+                          alt=""
+                          onError={(e) => onAvatarError(e, settings.username)}
+                        />
                         <span className="xp-settings-avatar-overlay">Change</span>
                       </button>
                       <button className="xp-button" onClick={() => setStatusEditOpen(true)}>
                         Set Status
+                      </button>
+                      <button className="xp-button" onClick={resetAvatar} disabled={avatarApplying}>
+                        {avatarApplying ? "Resetting..." : "Reset Avatar"}
                       </button>
                     </div>
                     <div className="xp-settings-row">
@@ -5340,7 +5434,11 @@ export default function App() {
                   )}
                   {selectedChat?.type === "dm" && selectedFriend && (
                     <div className="xp-chat-head-info" onClick={() => loadProfile(selectedFriend.id)}>
-                      <img src={selectedFriend.avatar || defaultAvatar(selectedFriend.username)} alt="" />
+                      <img
+                        src={avatarUrl(selectedFriend.avatar, selectedFriend.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, selectedFriend.username)}
+                      />
                       <div className="xp-chat-text">
                         <div className="xp-chat-name">@{selectedFriend.username}</div>
                         <div className="xp-chat-display">
@@ -5536,13 +5634,22 @@ export default function App() {
                                 <img
                                   src={
                                     msg.sender_id === user.id
-                                      ? settings.avatar || defaultAvatar(user.username)
+                                      ? avatarUrl(settings.avatar, user.username)
                                       : selectedChat?.type === "dm"
-                                      ? selectedFriend?.avatar || defaultAvatar(selectedFriend?.username)
+                                      ? avatarUrl(selectedFriend?.avatar, selectedFriend?.username)
                                       : selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.avatar ||
                                         defaultAvatar(selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username)
                                   }
                                   alt=""
+                                  onError={(e) => {
+                                    const fallbackName =
+                                      msg.sender_id === user.id
+                                        ? user.username
+                                        : selectedChat?.type === "dm"
+                                        ? selectedFriend?.username
+                                        : selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username;
+                                    onAvatarError(e, fallbackName);
+                                  }}
                                 />
                               </button>
                             )}
@@ -5799,6 +5906,7 @@ export default function App() {
                           setMessageInput(e.target.value);
                           handleTyping();
                         }}
+                        onPaste={handlePasteImage}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
@@ -5897,21 +6005,22 @@ export default function App() {
               </div>
               <div className="xp-chat-profile-body">
                 <div className="xp-chat-profile-card">
-                  <img
-                    className="xp-chat-profile-avatar"
-                    src={selectedFriend.avatar || defaultAvatar(selectedFriend.username)}
-                    alt=""
-                  />
+                  <div className="xp-chat-profile-avatar-wrap">
+                    <img
+                      className="xp-chat-profile-avatar"
+                      src={avatarUrl(selectedFriend.avatar, selectedFriend.username)}
+                      alt=""
+                      onError={(e) => onAvatarError(e, selectedFriend.username)}
+                    />
+                    <span
+                      className="xp-status-bubble"
+                      style={{ backgroundColor: getStatusColor(selectedFriend.status || "offline") }}
+                      title={getStatusLabel(selectedFriend.status || "offline")}
+                    />
+                  </div>
                   <div className="xp-chat-profile-username">@{selectedFriend.username}</div>
                   <div className="xp-chat-profile-display">
                     {nicknameMap[selectedFriend.id] || selectedFriend.display_name || selectedFriend.username}
-                  </div>
-                  <div className="xp-chat-profile-status">
-                    <span
-                      className="xp-status-dot"
-                      style={{ backgroundColor: getStatusColor(selectedFriend.status || "offline") }}
-                    />
-                    <span>{getStatusLabel(selectedFriend.status || "offline")}</span>
                   </div>
                   {(selectedFriend.custom_status || customStatusById[selectedFriend.id]) && (
                     <div className="xp-chat-profile-custom">
@@ -5960,7 +6069,11 @@ export default function App() {
                         <div className="xp-chat-profile-list">
                           {mutualFriends.map((f) => (
                             <div key={f.id || f.username} className="xp-chat-profile-item">
-                              <img src={f.avatar || defaultAvatar(f.username)} alt="" />
+                              <img
+                                src={avatarUrl(f.avatar, f.username)}
+                                alt=""
+                                onError={(e) => onAvatarError(e, f.username)}
+                              />
                               <span>{f.display_name || f.username}</span>
                             </div>
                           ))}
@@ -6017,7 +6130,11 @@ export default function App() {
                     onClick={() => loadProfile(m.id)}
                     onContextMenu={(e) => openGroupMemberMenu(e, m.id)}
                   >
-                    <img src={m.avatar || defaultAvatar(m.username)} alt="" />
+                    <img
+                      src={avatarUrl(m.avatar, m.username)}
+                      alt=""
+                      onError={(e) => onAvatarError(e, m.username)}
+                    />
                     <div>
                       <div className="xp-user-name">
                         {m.display_name || m.username}
@@ -6361,12 +6478,20 @@ export default function App() {
                           className={`xp-story-ring active${profileHasUnviewed ? "" : " viewed"}`}
                           onClick={() => openStoryByUserId(profileUser.id)}
                         >
-                          <img src={profileUser.avatar || defaultAvatar(profileUser.username)} alt="" />
+                          <img
+                            src={avatarUrl(profileUser.avatar, profileUser.username)}
+                            alt=""
+                            onError={(e) => onAvatarError(e, profileUser.username)}
+                          />
                         </button>
                       </div>
                     ) : (
                       <div className="xp-profile-avatar">
-                        <img src={profileUser.avatar || defaultAvatar(profileUser.username)} alt="" />
+                        <img
+                          src={avatarUrl(profileUser.avatar, profileUser.username)}
+                          alt=""
+                          onError={(e) => onAvatarError(e, profileUser.username)}
+                        />
                       </div>
                     )}
                   </div>
@@ -6903,7 +7028,11 @@ export default function App() {
                       className={`xp-forward-item ${addMembersSelected[f.id] ? "active" : ""}`}
                       onClick={() => setAddMembersSelected((prev) => ({ ...prev, [f.id]: !prev[f.id] }))}
                     >
-                      <img src={f.avatar || defaultAvatar(f.username)} alt="" />
+                      <img
+                        src={avatarUrl(f.avatar, f.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, f.username)}
+                      />
                       <div>
                         <div className="xp-forward-name">@{f.username}</div>
                         <div className="xp-forward-sub">{f.display_name || f.username}</div>
@@ -7481,7 +7610,11 @@ export default function App() {
                       className={`xp-forward-item ${forwardTarget?.type === "dm" && forwardTarget.id === f.id ? "active" : ""}`}
                       onClick={() => setForwardTarget({ type: "dm", id: f.id })}
                     >
-                      <img src={f.avatar || defaultAvatar(f.username)} alt="" />
+                      <img
+                        src={avatarUrl(f.avatar, f.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, f.username)}
+                      />
                       <div>
                         <div className="xp-forward-name">@{f.username}</div>
                         <div className="xp-forward-sub">{f.display_name || f.username}</div>
@@ -7497,7 +7630,11 @@ export default function App() {
                       className={`xp-forward-item ${forwardTarget?.type === "group" && forwardTarget.id === g.id ? "active" : ""}`}
                       onClick={() => setForwardTarget({ type: "group", id: g.id })}
                     >
-                      <img src={g.avatar || defaultAvatar(g.name)} alt="" />
+                      <img
+                        src={avatarUrl(g.avatar, g.name)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, g.name)}
+                      />
                       <div>
                         <div className="xp-forward-name">{g.name}</div>
                         <div className="xp-forward-sub">{(g.members || []).length} members</div>
@@ -7834,7 +7971,11 @@ export default function App() {
                     {storyViewers.length === 0 && <div className="xp-muted">No views yet</div>}
                     {storyViewers.map((v) => (
                       <div key={v.id} className="xp-story-viewer">
-                        <img src={v.avatar || defaultAvatar(v.username)} alt="" />
+                        <img
+                          src={avatarUrl(v.avatar, v.username)}
+                          alt=""
+                          onError={(e) => onAvatarError(e, v.username)}
+                        />
                         <div>
                           <div className="xp-user-name">@{v.username}</div>
                           <div className="xp-user-display">{v.display_name || v.username}</div>
@@ -7895,7 +8036,11 @@ export default function App() {
                 return (
                   <div className="xp-call-user">
                     <div className="xp-call-avatar ringing">
-                      <img src={other?.avatar || defaultAvatar(other?.username || "U")} alt="" />
+                      <img
+                        src={avatarUrl(other?.avatar, other?.username || "U")}
+                        alt=""
+                        onError={(e) => onAvatarError(e, other?.username || "U")}
+                      />
                     </div>
                     <div>
                       <div className="xp-call-name">@{other?.username || "user"}</div>
@@ -7931,7 +8076,11 @@ export default function App() {
                 return (
                   <div className="xp-call-user">
                     <div className="xp-call-avatar ringing">
-                      <img src={other?.avatar || defaultAvatar(other?.username || "U")} alt="" />
+                      <img
+                        src={avatarUrl(other?.avatar, other?.username || "U")}
+                        alt=""
+                        onError={(e) => onAvatarError(e, other?.username || "U")}
+                      />
                     </div>
                     <div>
                       <div className="xp-call-name">@{other?.username || "user"}</div>
@@ -7966,7 +8115,11 @@ export default function App() {
               return (
                 <div className="xp-call-user">
                   <div className={`xp-call-avatar ${speakingRemote ? "speaking" : ""} ${solo ? "solo" : ""}`}>
-                    <img src={other?.avatar || defaultAvatar(other?.username || "U")} alt="" />
+                    <img
+                      src={avatarUrl(other?.avatar, other?.username || "U")}
+                      alt=""
+                      onError={(e) => onAvatarError(e, other?.username || "U")}
+                    />
                   </div>
                   <div>
                     <div className="xp-call-name">@{other?.username || "user"}</div>
@@ -7989,6 +8142,7 @@ export default function App() {
                 <div className="xp-call-effect">Effects: {voiceEffect}</div>
               )}
             </div>
+            {screenShareError && <div className="xp-error xp-call-error">{screenShareError}</div>}
             <div className="xp-call-actions">
               <div className="xp-call-mic">
                 <button className={`xp-button xp-icon-btn ${callState.muted ? "muted" : ""}`} onClick={toggleMute} title={callState.muted ? "Unmute" : "Mute"}>
@@ -8139,12 +8293,17 @@ export default function App() {
                       groupSpeakingMap[m.id] ? "speaking" : ""
                     }`}
                   >
-                    <img src={m.avatar || defaultAvatar(m.username)} alt="" />
+                    <img
+                      src={avatarUrl(m.avatar, m.username)}
+                      alt=""
+                      onError={(e) => onAvatarError(e, m.username)}
+                    />
                     <div className="xp-call-avatar-name">@{m.username}</div>
                   </div>
                 ))}
             </div>
             <div className="xp-call-duration">{formatDuration(groupCallDuration)}</div>
+            {screenShareError && <div className="xp-error xp-call-error">{screenShareError}</div>}
             {groupCall.status === "ringing" ? (
               <div className="xp-call-actions">
                 <button className="xp-button" onClick={() => joinGroupCall(groupCall.groupId)}>Join</button>
@@ -8324,7 +8483,11 @@ export default function App() {
                   className="xp-group-member"
                   onClick={() => loadProfile(m.id)}
                 >
-                  <img src={m.avatar || defaultAvatar(m.username)} alt="" />
+                  <img
+                    src={avatarUrl(m.avatar, m.username)}
+                    alt=""
+                    onError={(e) => onAvatarError(e, m.username)}
+                  />
                   <div>
                     <div className="xp-user-name">
                       {m.display_name || m.username}
@@ -8369,10 +8532,8 @@ export default function App() {
                 <video
                   srcObject={entry.stream}
                   autoPlay
+                  muted
                   playsInline
-                  onLoadedMetadata={(e) => {
-                    e.currentTarget.volume = callSettings.speakerVolume ?? 1;
-                  }}
                 />
               </div>
             ))}
