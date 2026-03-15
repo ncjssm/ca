@@ -6,8 +6,15 @@ import os from "os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const legacyDbPath = path.join(__dirname, "db", "chat.sqlite");
+const volumePath =
+  process.env.RAILWAY_VOLUME_MOUNT_PATH ||
+  process.env.RAILWAY_VOLUME_PATH ||
+  process.env.VOLUME_PATH ||
+  process.env.RAILWAY_VOLUME ||
+  "";
 const dbBase =
   process.env.DB_DIR ||
+  volumePath ||
   (process.env.LOCALAPPDATA
     ? path.join(process.env.LOCALAPPDATA, "xp-chat")
     : process.env.APPDATA
