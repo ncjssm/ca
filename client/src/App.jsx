@@ -127,6 +127,21 @@ function resolveMediaUrl(url) {
   return `${API_URL}${url}`;
 }
 
+function dataUrlToBlob(dataUrl) {
+  if (!dataUrl?.startsWith("data:")) return null;
+  const [meta, data] = dataUrl.split(",");
+  if (!meta || !data) return null;
+  const mimeMatch = meta.match(/data:([^;]+);/);
+  const mime = mimeMatch ? mimeMatch[1] : "image/png";
+  const binary = atob(data);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
 function chatKey(type, id) {
   return `${type}:${id}`;
 }
@@ -3904,11 +3919,29 @@ export default function App() {
 
   async function applyAvatarDataUrl(dataUrl) {
     await new Promise((r) => setTimeout(r, 180));
+    const blob = dataUrlToBlob(dataUrl);
+    if (!blob) return;
+    const formData = new FormData();
+    formData.append("image", blob, "avatar.png");
+    const upload = await apiUpload("/api/uploads", formData);
+    const avatarUrlValue = upload.url;
     await apiFetch("/api/settings", {
       method: "PATCH",
-      body: JSON.stringify({ avatar: dataUrl }),
+      body: JSON.stringify({ avatar: avatarUrlValue }),
     });
-    setSettings((prev) => ({ ...prev, avatar: dataUrl }));
+    setSettings((prev) => ({ ...prev, avatar: avatarUrlValue }));
+  }
+
+  async function applyAvatarFile(file) {
+    const formData = new FormData();
+    formData.append("image", file);
+    const upload = await apiUpload("/api/uploads", formData);
+    const avatarUrlValue = upload.url;
+    await apiFetch("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ avatar: avatarUrlValue }),
+    });
+    setSettings((prev) => ({ ...prev, avatar: avatarUrlValue }));
   }
 
   async function resetAvatar() {
@@ -3933,7 +3966,7 @@ export default function App() {
           setEditGroupAvatar(url);
         }, 180);
       } else {
-        applyAvatarDataUrl(URL.createObjectURL(file));
+        applyAvatarFile(file);
       }
       return;
     }
