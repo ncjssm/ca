@@ -3733,18 +3733,18 @@ body {
   position: absolute;
   inset: 0;
   border-radius: 4px;
-  border: 2px solid rgba(58, 124, 245, 0.7);
-  box-shadow: 0 0 8px rgba(58, 124, 245, 0.55);
+  border: 2px solid color-mix(in srgb, var(--xp-blue) 70%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--xp-blue) 55%, transparent);
   opacity: 0;
   transform: scale(0.98);
-  transition: opacity 180ms ease, transform 180ms ease;
+  transition: opacity 220ms ease, transform 220ms ease;
   pointer-events: none;
 }
 
 .xp-call-avatar.speaking::after {
   opacity: 1;
   transform: scale(1);
-  animation: xp-speaking 1.3s ease-in-out infinite;
+  animation: xp-speaking 1.6s ease-in-out infinite;
 }
 
 .xp-call-avatar.speaking {
@@ -3807,20 +3807,20 @@ body {
   0% {
     transform: scale(1);
     box-shadow:
-      0 0 0 3px rgba(58, 124, 245, 0.3),
-      0 0 12px rgba(58, 124, 245, 0.45);
+      0 0 0 3px color-mix(in srgb, var(--xp-blue) 35%, transparent),
+      0 0 12px color-mix(in srgb, var(--xp-blue) 55%, transparent);
   }
   50% {
-    transform: scale(1.05);
+    transform: scale(1.04);
     box-shadow:
-      0 0 0 4px rgba(58, 124, 245, 0.65),
-      0 0 18px rgba(58, 124, 245, 0.7);
+      0 0 0 4px color-mix(in srgb, var(--xp-blue) 65%, transparent),
+      0 0 18px color-mix(in srgb, var(--xp-blue) 70%, transparent);
   }
   100% {
     transform: scale(1);
     box-shadow:
-      0 0 0 3px rgba(58, 124, 245, 0.3),
-      0 0 12px rgba(58, 124, 245, 0.45);
+      0 0 0 3px color-mix(in srgb, var(--xp-blue) 35%, transparent),
+      0 0 12px color-mix(in srgb, var(--xp-blue) 55%, transparent);
   }
 }
 
