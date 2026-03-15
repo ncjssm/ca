@@ -452,6 +452,7 @@ export default function App() {
   const [primaryError, setPrimaryError] = useState("");
   const [primarySwitching, setPrimarySwitching] = useState(false);
   const [transferModal, setTransferModal] = useState(null);
+  const [transferError, setTransferError] = useState("");
   const [removeAliasModal, setRemoveAliasModal] = useState(null);
   const [aliasTransfering, setAliasTransfering] = useState(false);
   const [aliasRemoving, setAliasRemoving] = useState(false);
@@ -4311,16 +4312,22 @@ export default function App() {
 
   async function transferAlias(username, toUsername, password) {
     setAliasTransfering(true);
+    setTransferError("");
     try {
+      const cleanTo = (toUsername || "").trim();
+      const cleanPass = password || "";
+      if (!cleanTo || !cleanPass) {
+        throw new Error("Recipient and password required");
+      }
       await apiFetch("/api/usernames/transfer", {
         method: "POST",
-        body: JSON.stringify({ username, toUsername, password }),
+        body: JSON.stringify({ username, toUsername: cleanTo, password: cleanPass }),
       });
       await new Promise((r) => setTimeout(r, 280));
       await loadUsernames();
       setTransferModal(null);
     } catch (err) {
-      setPrimaryError(err.message || "Transfer failed");
+      setTransferError(err.message || "Transfer failed");
     } finally {
       setAliasTransfering(false);
     }
@@ -7789,12 +7796,12 @@ export default function App() {
                   onChange={(e) => setTransferModal((prev) => ({ ...prev, password: e.target.value }))}
                 />
               </label>
+              {transferError && <div className="xp-error">{transferError}</div>}
               <div className="xp-button-row">
                 <button
                   className="xp-button"
                   onClick={() => {
                     transferAlias(transferModal.username, transferModal.to || "", transferModal.password || "");
-                    setTimeout(() => setTransferModal(null), 280);
                   }}
                   disabled={aliasTransfering}
                 >
