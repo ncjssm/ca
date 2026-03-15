@@ -339,6 +339,9 @@ export default function App() {
   const sentPulseTimerRef = useRef(null);
   const [unreadChats, setUnreadChats] = useState({});
   const mobileTouchRef = useRef({ x: 0, y: 0, active: false });
+  const longPressTimerRef = useRef(null);
+  const longPressStartRef = useRef({ x: 0, y: 0, active: false });
+  const longPressTriggeredRef = useRef(false);
 
   const [friendSearch, setFriendSearch] = useState("");
   const [friendError, setFriendError] = useState("");
@@ -4061,6 +4064,46 @@ export default function App() {
     setShowMessageMenu({ x: event.clientX, y: event.clientY, message });
   }
 
+  function handleMessageLongPressStart(event, message) {
+    if (!isMobile) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    longPressTriggeredRef.current = false;
+    longPressStartRef.current = { x: touch.clientX, y: touch.clientY, active: true };
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      openMessageMenu(
+        { preventDefault() {}, clientX: touch.clientX, clientY: touch.clientY },
+        message
+      );
+      if (navigator?.vibrate) navigator.vibrate(20);
+    }, 520);
+  }
+
+  function handleMessageLongPressMove(event) {
+    if (!longPressStartRef.current.active) return;
+    const touch = event.touches?.[0];
+    if (!touch) return;
+    const dx = touch.clientX - longPressStartRef.current.x;
+    const dy = touch.clientY - longPressStartRef.current.y;
+    if (Math.hypot(dx, dy) > 12) {
+      longPressStartRef.current.active = false;
+      if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    }
+  }
+
+  function handleMessageLongPressEnd(event) {
+    longPressStartRef.current.active = false;
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    if (longPressTriggeredRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
   function openProfileMenu(event, userId) {
     event.preventDefault();
     setShowProfileMenu({ x: event.clientX, y: event.clientY, userId });
@@ -5293,6 +5336,10 @@ export default function App() {
                       <div
                         className={`xp-message ${msg.sender_id === user.id ? "outgoing" : ""} ${msg.is_system ? "system" : ""} ${showAvatar ? "" : "grouped"} ${deletingMessageIds[msg.id] ? "deleting" : ""}`}
                         onContextMenu={(e) => openMessageMenu(e, msg)}
+                        onTouchStart={(e) => handleMessageLongPressStart(e, msg)}
+                        onTouchMove={handleMessageLongPressMove}
+                        onTouchEnd={handleMessageLongPressEnd}
+                        onTouchCancel={handleMessageLongPressEnd}
                       >
                   <div className="xp-message-row">
                         {!msg.is_system && (
