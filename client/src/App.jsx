@@ -1021,6 +1021,33 @@ export default function App() {
       }
     });
 
+    socket.on("profile:update", (payload) => {
+      if (!payload?.id) return;
+      setFriends((prev) => prev.map((f) => (f.id === payload.id ? { ...f, ...payload } : f)));
+      setFriendsAll((prev) => prev.map((f) => (f.id === payload.id ? { ...f, ...payload } : f)));
+      setManualDmUsers((prev) => prev.map((u) => (u.id === payload.id ? { ...u, ...payload } : u)));
+      setGroups((prev) =>
+        prev.map((g) => ({
+          ...g,
+          members: (g.members || []).map((m) => (m.id === payload.id ? { ...m, ...payload } : m)),
+        }))
+      );
+      setSelectedGroup((prev) =>
+        prev
+          ? {
+              ...prev,
+              members: (prev.members || []).map((m) => (m.id === payload.id ? { ...m, ...payload } : m)),
+            }
+          : prev
+      );
+      if (selectedFriend?.id === payload.id) {
+        setSelectedFriend((prev) => ({ ...prev, ...payload }));
+      }
+      if (profileUser?.id === payload.id) {
+        setProfileUser((prev) => ({ ...prev, ...payload }));
+      }
+    });
+
     socket.on("presence:update", ({ userId, status }) => {
       setFriends((prev) => prev.map((f) => (f.id === userId ? { ...f, status } : f)));
       setFriendsAll((prev) => prev.map((f) => (f.id === userId ? { ...f, status } : f)));
@@ -6083,7 +6110,7 @@ export default function App() {
                     </div>
                     {(selectedFriend.custom_status || customStatusById[selectedFriend.id]) && (
                       <div className="xp-chat-profile-bubble">
-                        Current status: {selectedFriend.custom_status || customStatusById[selectedFriend.id]}
+                        {selectedFriend.custom_status || customStatusById[selectedFriend.id]}
                       </div>
                     )}
                   </div>
