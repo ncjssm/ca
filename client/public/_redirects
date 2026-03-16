@@ -1,0 +1,4 @@
+/api/* https://spirited-achievement-production-0db7.up.railway.app/api/:splat 200
+/socket.io/* https://spirited-achievement-production-0db7.up.railway.app/socket.io/:splat 200
+/uploads/* https://spirited-achievement-production-0db7.up.railway.app/uploads/:splat 200
+/* /index.html 200

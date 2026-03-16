@@ -88,6 +88,18 @@ const BLACKJACK_CHAINS = [
   { id: "polygon", label: "Polygon" },
 ];
 
+function formatGameTokenLabel(token) {
+  if (!token) return "";
+  if (token === "USDC") return "USDC stablecoin";
+  if (token === "USDT") return "USDT stablecoin";
+  if (token === "DAI") return "DAI stablecoin";
+  return token;
+}
+
+function formatGameChainLabel(chain) {
+  return BLACKJACK_CHAIN_LABELS[chain] || chain;
+}
+
 const EMOJI_LIST = [":)", ":(", ":D", ";)", "<3", ":O", ":P", ":3", "^_^", ">_<", "(y)", "(n)"];
 const REACTION_EMOJIS = ["<3", ":)", ":D", ":O", ";)", "T_T", "^_^", ":P", "(y)"];
 
@@ -6842,7 +6854,6 @@ export default function App() {
 
             <div className="xp-sidebar-actions">
               <button className="xp-button" type="button" onClick={() => setView("chat")}>Inbox</button>
-              <button className="xp-button" type="button" onClick={() => setMiniGameHubOpen(true)}>Games</button>
               <button className="xp-button" type="button" onClick={() => setView("settings")}>Settings</button>
             </div>
 
@@ -11018,13 +11029,12 @@ export default function App() {
               <button className="xp-modal-close" onClick={() => setBlackjackPanelOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
-              {renderGameAudioStrip("casino")}
               {!blackjackMatch && (
                 <div className="xp-blackjack-setup">
                   <div className="xp-blackjack-setup-card">
                     <div className="xp-blackjack-title">Invite a friend</div>
                     <div className="xp-blackjack-sub">
-                      Create a 1v1 table inside your call. Choose a wager and chain.
+                      Create a 1v1 table inside your call. Set how much each player risks, then choose the token and network.
                     </div>
                   <div className="xp-blackjack-form">
                       <label>
@@ -11046,11 +11056,17 @@ export default function App() {
                       <label>
                         Wager
                         <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          placeholder="Example: 10"
                           value={blackjackInvite.wager}
                           onChange={(e) =>
                             setBlackjackInvite((prev) => ({ ...prev, wager: e.target.value }))
                           }
                         />
+                        <small>Each player deposits this same amount.</small>
                       </label>
                       <label>
                         Token
@@ -11066,6 +11082,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+                        <small>What both players will deposit and win in.</small>
                       </label>
                       <label>
                         Chain
@@ -11081,6 +11098,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+                        <small>{formatGameTokenLabel(blackjackInvite.token)} on {formatGameChainLabel(blackjackInvite.chain)}.</small>
                       </label>
                     </div>
                     <button
@@ -11097,6 +11115,8 @@ export default function App() {
 
               {blackjackMatch && (
                 <div className="xp-blackjack-room">
+                  {(blackjackMatch.status === "active" || blackjackMatch.status === "ended" || blackjackMatch.status === "settled") &&
+                    renderGameAudioStrip("casino")}
                   <div className="xp-blackjack-header">
                     <div>
                       <div className="xp-blackjack-title">Pot</div>
@@ -11371,7 +11391,6 @@ export default function App() {
               <button className="xp-modal-close" onClick={() => setMiniGameHubOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
-              {renderGameAudioStrip(miniGameMatch?.game_type === "coinflip" ? "coinflip" : "casino")}
               {!miniGameMatch && (
                 <div className="xp-minigame-setup">
                   <div className="xp-minigame-card">
@@ -11417,11 +11436,21 @@ export default function App() {
                       <label>
                         Wager
                         <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          inputMode="decimal"
+                          placeholder="Example: 10"
                           value={miniGameInvite.wager}
                           onChange={(e) =>
                             setMiniGameInvite((prev) => ({ ...prev, wager: e.target.value }))
                           }
                         />
+                        <small>
+                          {miniGameInvite.gameType === "coinflip"
+                            ? "Both players match this exact amount."
+                            : "This is the starting amount. Players can deposit more when the round locks."}
+                        </small>
                       </label>
                       <label>
                         Token
@@ -11437,6 +11466,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+                        <small>What the pot will be held and paid out in.</small>
                       </label>
                       <label>
                         Chain
@@ -11452,6 +11482,7 @@ export default function App() {
                             </option>
                           ))}
                         </select>
+                        <small>{formatGameTokenLabel(miniGameInvite.token)} on {formatGameChainLabel(miniGameInvite.chain)}.</small>
                       </label>
                     </div>
                     <button
@@ -11468,6 +11499,10 @@ export default function App() {
 
               {miniGameMatch && (
                 <div className="xp-minigame-room">
+                  {(miniGameMatch.status === "active" ||
+                    miniGameMatch.status === "ended" ||
+                    miniGameMatch.status === "settled") &&
+                    renderGameAudioStrip(miniGameMatch?.game_type === "coinflip" ? "coinflip" : "casino")}
                   <div className="xp-minigame-header">
                     <div>
                       <div className="xp-minigame-title">{miniGameGameLabel}</div>

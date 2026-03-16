@@ -6703,13 +6703,59 @@ body {
 
 .xp-blackjack-form label {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
+  color: #24406b;
+  font-weight: 600;
 }
 
 .xp-blackjack-form input,
 .xp-blackjack-form select {
   width: 100%;
+}
+
+.xp-blackjack-form small,
+.xp-minigame-form small {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #667892;
+  font-weight: 500;
+}
+
+.xp-blackjack-form input,
+.xp-blackjack-form select,
+.xp-minigame-form input,
+.xp-minigame-form select {
+  min-height: 40px;
+  border: 1px solid #c9d5e8;
+  border-radius: 12px;
+  padding: 0 12px;
+  background: linear-gradient(180deg, #ffffff, #f4f8ff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.xp-blackjack-form input:focus,
+.xp-blackjack-form select:focus,
+.xp-minigame-form input:focus,
+.xp-minigame-form select:focus {
+  outline: none;
+  border-color: #5f88d9;
+  box-shadow: 0 0 0 3px rgba(95, 136, 217, 0.16);
+}
+
+.xp-blackjack-form select,
+.xp-minigame-form select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding-right: 42px;
+  background-image:
+    linear-gradient(180deg, #ffffff, #f4f8ff),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14'%3E%3Cpath fill='%23416396' d='M3.1 4.6a.8.8 0 0 1 1.13.04L7 7.66l2.77-3.02a.8.8 0 1 1 1.18 1.08L7.59 9.4a.8.8 0 0 1-1.18 0L3.06 5.72a.8.8 0 0 1 .04-1.12Z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: left top, right 14px center;
+  background-size: 100% 100%, 14px 14px;
 }
 
 .xp-blackjack-deposit {
@@ -7101,8 +7147,6 @@ body {
   color: #25426b;
 }
 
-.xp-minigame-form input,
-.xp-minigame-form select,
 .xp-minigame-action-row input {
   width: 100%;
   min-height: 38px;
