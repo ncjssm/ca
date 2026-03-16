@@ -663,7 +663,6 @@ export default function App() {
   const [friendSuccess, setFriendSuccess] = useState("");
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
-  const [notificationClock, setNotificationClock] = useState(Date.now());
   const [showNotifications, setShowNotifications] = useState(false);
   const [showChatProfile, setShowChatProfile] = useState(false);
   const [showMutualGroups, setShowMutualGroups] = useState(false);
@@ -2121,13 +2120,6 @@ export default function App() {
     }, 1000);
     return () => clearInterval(id);
   }, [storyViewer.open]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setNotificationClock(Date.now());
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   useEffect(() => {
     if (!callState.startTime) return;
@@ -6303,7 +6295,7 @@ export default function App() {
     return parts;
   }
 
-  function renderNotificationText(n, currentNotificationClock, handlers) {
+  function renderNotificationText(n, handlers) {
     const text = n?.message || "Notification";
     const payload = parseNotificationPayload(n);
     if (n?.type === "group_invite" && n.group_id) {
@@ -6332,7 +6324,7 @@ export default function App() {
       return `@${n.from_username} has mentioned you in private`;
     }
     if (n?.type === "blackjack_invite") {
-      if (isGameInviteExpired(n, currentNotificationClock)) {
+      if (isGameInviteExpired(n)) {
         return "Blackjack invitation expired.";
       }
       const wager = payload?.wagerAmount ? `${payload.wagerAmount} ${payload.token || "USDC"}` : "a wager";
@@ -6347,7 +6339,7 @@ export default function App() {
       return "You won a Blackjack match. Claim your winnings.";
     }
     if (n?.type === "minigame_invite") {
-      if (isGameInviteExpired(n, currentNotificationClock)) {
+      if (isGameInviteExpired(n)) {
         const gameLabel = payload?.gameType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
         return `${gameLabel} invitation expired.`;
       }
@@ -6948,11 +6940,11 @@ export default function App() {
                       {(() => {
                         const inviteExpired =
                           (n.type === "blackjack_invite" || n.type === "minigame_invite") &&
-                          isGameInviteExpired(n, notificationClock);
+                          isGameInviteExpired(n);
                         return (
                           <>
                       <div className="xp-notification-text">
-                        {renderNotificationText(n, notificationClock, { selectGroup, loadProfile })}
+                        {renderNotificationText(n, { selectGroup, loadProfile })}
                       </div>
                       <div className="xp-notification-actions">
                         {n.context === "group" && n.group_id && n.type !== "group_invite" && (
