@@ -6303,7 +6303,7 @@ export default function App() {
     return parts;
   }
 
-  function renderNotificationText(n) {
+  function renderNotificationText(n, currentNotificationClock, handlers) {
     const text = n?.message || "Notification";
     const payload = parseNotificationPayload(n);
     if (n?.type === "group_invite" && n.group_id) {
@@ -6311,7 +6311,7 @@ export default function App() {
         <>
           {n.from_username ? <>@{n.from_username}</> : null}{" "}
           has added you to{" "}
-          <button className="xp-mention xp-mention-inline" type="button" onClick={() => selectGroup(n.group_id)}>
+          <button className="xp-mention xp-mention-inline" type="button" onClick={() => handlers.selectGroup(n.group_id)}>
             #{n.group_name || "group"}
           </button>
         </>
@@ -6322,7 +6322,7 @@ export default function App() {
       return (
         <>
           @{n.from_username} has mentioned you in{" "}
-          <button className="xp-mention xp-mention-inline" type="button" onClick={() => selectGroup(n.group_id)}>
+          <button className="xp-mention xp-mention-inline" type="button" onClick={() => handlers.selectGroup(n.group_id)}>
             #{n.group_name || "group"}
           </button>
         </>
@@ -6332,7 +6332,7 @@ export default function App() {
       return `@${n.from_username} has mentioned you in private`;
     }
     if (n?.type === "blackjack_invite") {
-      if (isGameInviteExpired(n, notificationClock)) {
+      if (isGameInviteExpired(n, currentNotificationClock)) {
         return "Blackjack invitation expired.";
       }
       const wager = payload?.wagerAmount ? `${payload.wagerAmount} ${payload.token || "USDC"}` : "a wager";
@@ -6347,7 +6347,7 @@ export default function App() {
       return "You won a Blackjack match. Claim your winnings.";
     }
     if (n?.type === "minigame_invite") {
-      if (isGameInviteExpired(n, notificationClock)) {
+      if (isGameInviteExpired(n, currentNotificationClock)) {
         const gameLabel = payload?.gameType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
         return `${gameLabel} invitation expired.`;
       }
@@ -6379,7 +6379,7 @@ export default function App() {
             key={`${start}-${name}`}
             type="button"
             className="xp-mention"
-            onClick={() => loadProfile(n.from_user_id)}
+            onClick={() => handlers.loadProfile(n.from_user_id)}
           >
             @{name}
           </button>
@@ -6951,7 +6951,9 @@ export default function App() {
                           isGameInviteExpired(n, notificationClock);
                         return (
                           <>
-                      <div className="xp-notification-text">{renderNotificationText(n)}</div>
+                      <div className="xp-notification-text">
+                        {renderNotificationText(n, notificationClock, { selectGroup, loadProfile })}
+                      </div>
                       <div className="xp-notification-actions">
                         {n.context === "group" && n.group_id && n.type !== "group_invite" && (
                           <button className="xp-button" onClick={() => selectGroup(n.group_id)}>
