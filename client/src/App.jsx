@@ -11637,7 +11637,7 @@ export default function App() {
 
       {miniGameHubOpen && (
         <div className="xp-modal-overlay xp-call-overlay" onClick={() => setMiniGameHubOpen(false)}>
-          <div className="xp-modal xp-minigame-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="xp-modal xp-blackjack-modal xp-minigame-modal" onClick={(e) => e.stopPropagation()}>
             <div className="xp-modal-title">
               <span>{miniGameGameLabel}</span>
               <button className="xp-modal-close" onClick={() => setMiniGameHubOpen(false)}>x</button>
