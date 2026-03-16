@@ -6633,8 +6633,9 @@ export default function App() {
     !!miniGameMatch?.escrow_match_id &&
     !!miniGameMatch?.escrow_factory_address &&
     !!miniGameMatch?.token_address;
+  const miniGameSelectedType = miniGameMatch?.game_type || miniGameInvite.gameType || "coinflip";
   const miniGameGameLabel =
-    miniGameMatch?.game_type === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
+    miniGameSelectedType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
   const walletOptions = useMemo(() => {
     const injected = listInjectedWallets();
     const options = [...injected];
@@ -11355,34 +11356,18 @@ export default function App() {
         <div className="xp-modal-overlay xp-call-overlay" onClick={() => setMiniGameHubOpen(false)}>
           <div className="xp-modal xp-minigame-modal" onClick={(e) => e.stopPropagation()}>
             <div className="xp-modal-title">
-              <span>{miniGameMatch ? miniGameGameLabel : "Mini Games"}</span>
+              <span>{miniGameGameLabel}</span>
               <button className="xp-modal-close" onClick={() => setMiniGameHubOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
               {!miniGameMatch && (
                 <div className="xp-minigame-setup">
                   <div className="xp-minigame-card">
-                    <div className="xp-minigame-title">Invite a friend</div>
+                    <div className="xp-minigame-title">Invite to {miniGameGameLabel}</div>
                     <div className="xp-minigame-sub">
-                      Fast wager games that start from Alerts and settle as soon as both players lock in.
-                    </div>
-                    <div className="xp-minigame-types">
-                      <button
-                        type="button"
-                        className={`xp-minigame-type ${miniGameInvite.gameType === "coinflip" ? "active" : ""}`}
-                        onClick={() => setMiniGameInvite((prev) => ({ ...prev, gameType: "coinflip" }))}
-                      >
-                        <span>Coinflip</span>
-                        <small>1v1 matched wager</small>
-                      </button>
-                      <button
-                        type="button"
-                        className={`xp-minigame-type ${miniGameInvite.gameType === "bigbank" ? "active" : ""}`}
-                        onClick={() => setMiniGameInvite((prev) => ({ ...prev, gameType: "bigbank" }))}
-                      >
-                        <span>Big Bank Small Bank</span>
-                        <small>Highest hidden deposit wins</small>
-                      </button>
+                      {miniGameSelectedType === "coinflip"
+                        ? "Set the wager, send the invite, then both players match the same deposit before the flip."
+                        : "Set the opening wager, send the invite, then both players secretly lock their amount before the round resolves."}
                     </div>
                     <div className="xp-minigame-form">
                       <label>
@@ -11415,7 +11400,7 @@ export default function App() {
                           }
                         />
                         <small>
-                          {miniGameInvite.gameType === "coinflip"
+                          {miniGameSelectedType === "coinflip"
                             ? "Both players match this exact amount."
                             : "This is the starting amount. Players can deposit more when the round locks."}
                         </small>
