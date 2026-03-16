@@ -7202,6 +7202,29 @@ body {
   gap: 16px;
 }
 
+.xp-minigame-setup {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.xp-minigame-setup::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/desktop/blackjack.png") center / cover no-repeat;
+  opacity: 0.05;
+  pointer-events: none;
+}
+
+.xp-minigame-setup > * {
+  position: relative;
+  z-index: 1;
+}
+
 .xp-minigame-card,
 .xp-minigame-stage,
 .xp-minigame-seat {
