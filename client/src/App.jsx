@@ -717,6 +717,7 @@ export default function App() {
   const [musicError, setMusicError] = useState("");
   const [blackjackPanelOpen, setBlackjackPanelOpen] = useState(false);
   const [blackjackMatch, setBlackjackMatch] = useState(null);
+  const [blackjackLoadingMatch, setBlackjackLoadingMatch] = useState(false);
   const [blackjackInvite, setBlackjackInvite] = useState({
     wager: "10",
     token: "USDC",
@@ -4963,6 +4964,7 @@ export default function App() {
 
   async function openBlackjackMatch(matchId) {
     if (!matchId) return;
+    setBlackjackLoadingMatch(true);
     setBlackjackError("");
     try {
       const data = await apiFetch(`/api/blackjack/${matchId}`);
@@ -4976,11 +4978,14 @@ export default function App() {
       }
     } catch (err) {
       setBlackjackError(err.message || "Unable to load match");
+    } finally {
+      setBlackjackLoadingMatch(false);
     }
   }
 
   async function sendBlackjackInvite(targetId) {
     if (!targetId) return;
+    setBlackjackLoadingMatch(true);
     setBlackjackError("");
     setBlackjackUiMessage("");
     try {
@@ -4998,10 +5003,12 @@ export default function App() {
       }
     } catch (err) {
       setBlackjackError(err.message || "Unable to invite");
+      setBlackjackLoadingMatch(false);
     }
   }
 
   async function acceptBlackjackInvite(matchId, notificationId) {
+    setBlackjackLoadingMatch(true);
     setBlackjackError("");
     try {
       const res = await apiFetch(`/api/blackjack/${matchId}/accept`, { method: "POST" });
@@ -5023,6 +5030,8 @@ export default function App() {
         loadNotifications();
       }
       setBlackjackError(err.message || "Unable to accept");
+    } finally {
+      setBlackjackLoadingMatch(false);
     }
   }
 
@@ -10998,7 +11007,18 @@ export default function App() {
               <button className="xp-modal-close" onClick={() => setBlackjackPanelOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
-              {!blackjackMatch && (
+              {blackjackLoadingMatch && !blackjackMatch && (
+                <div className="xp-blackjack-setup">
+                  <div className="xp-blackjack-setup-card xp-blackjack-loading-card">
+                    <div className="xp-blackjack-title">Game starting...</div>
+                    <div className="xp-blackjack-sub">
+                      Loading table, players, and deposit state.
+                    </div>
+                    <div className="xp-blackjack-loading-line" />
+                  </div>
+                </div>
+              )}
+              {!blackjackLoadingMatch && !blackjackMatch && (
                 <div className="xp-blackjack-setup">
                   <div className="xp-blackjack-setup-card">
                     <div className="xp-blackjack-title">Invite a friend</div>
