@@ -6706,14 +6706,31 @@ body {
   display: grid;
   place-items: center;
   min-height: 320px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.xp-blackjack-setup::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: url("/desktop/blackjack.png") center / cover no-repeat;
+  opacity: 0.18;
+  pointer-events: none;
+}
+
+.xp-blackjack-setup > * {
+  position: relative;
+  z-index: 1;
 }
 
 .xp-blackjack-setup-card {
   border: 1px solid var(--xp-border);
   border-radius: 10px;
   padding: 16px;
-  background: rgba(249, 251, 255, 0.9);
-  backdrop-filter: blur(2px);
+  background: rgba(249, 251, 255, 0.82);
+  backdrop-filter: blur(2.5px);
   width: min(420px, 100%);
   display: grid;
   gap: 12px;
