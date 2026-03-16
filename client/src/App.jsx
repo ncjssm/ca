@@ -2786,16 +2786,17 @@ export default function App() {
 
   useEffect(() => {
     const match = blackjackMatch;
-    if (!match?.id || !blackjackState) {
+    const matchState = match?.state || null;
+    if (!match?.id || !matchState) {
       prevBlackjackSnapshotRef.current = null;
       return;
     }
     const snapshot = {
       status: match.status,
-      dealerCards: (blackjackState.dealer?.cards || []).length,
-      dealerReveal: blackjackState.dealer?.status === "reveal",
+      dealerCards: (matchState.dealer?.cards || []).length,
+      dealerReveal: matchState.dealer?.status === "reveal",
       playerCardCounts: Object.fromEntries(
-        Object.entries(blackjackState.players || {}).map(([playerId, info]) => [
+        Object.entries(matchState.players || {}).map(([playerId, info]) => [
           playerId,
           (info?.hands || []).reduce((sum, hand) => sum + (hand?.cards?.length || 0), 0),
         ])
@@ -2824,7 +2825,7 @@ export default function App() {
       }
     }
     prevBlackjackSnapshotRef.current = snapshot;
-  }, [blackjackMatch?.id, blackjackMatch?.status, blackjackMatch?.winner_id, blackjackState, user?.id, gameAudioMuted]);
+  }, [blackjackMatch?.id, blackjackMatch?.status, blackjackMatch?.winner_id, blackjackMatch?.state, user?.id, gameAudioMuted]);
 
   useEffect(() => {
     if (!blackjackPanelOpen || !blackjackMatch?.id) return undefined;
@@ -5348,7 +5349,8 @@ export default function App() {
       }
       const ctx = await registerMiniGameWallet(selectedWalletOption);
       if (!ctx) return;
-      const registeredWallet = String(miniGameMe?.wallet_address || ctx.address).toLowerCase();
+      const myPlayer = (miniGameMatch?.players || []).find((p) => p.user_id === user?.id) || null;
+      const registeredWallet = String(myPlayer?.wallet_address || ctx.address).toLowerCase();
       if (registeredWallet !== String(ctx.address).toLowerCase()) {
         throw new Error("Connect the wallet registered for this game before depositing.");
       }
@@ -5435,7 +5437,7 @@ export default function App() {
 
   function prepareBlackjackRematch() {
     if (!blackjackMatch) return;
-    const opponent = blackjackPlayers.find((p) => p.user_id !== user?.id);
+    const opponent = (blackjackMatch.players || []).find((p) => p.user_id !== user?.id);
     setBlackjackInvite({
       wager: String(blackjackMatch.wager_amount || 10),
       token: blackjackMatch.token || "USDC",
@@ -5452,7 +5454,7 @@ export default function App() {
 
   function prepareMiniGameRematch() {
     if (!miniGameMatch) return;
-    const opponent = miniGamePlayers.find((p) => p.user_id !== user?.id);
+    const opponent = (miniGameMatch.players || []).find((p) => p.user_id !== user?.id);
     setMiniGameInvite({
       gameType: miniGameMatch.game_type || "coinflip",
       wager: String(miniGameMatch.wager_amount || 10),
