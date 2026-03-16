@@ -3143,6 +3143,33 @@ export default function App() {
     setConnections(data.connections || []);
   }
 
+  async function refreshCurrentUser() {
+    const data = await apiFetch("/api/me");
+    if (!data?.user) return;
+    if (data?.csrfToken) setCsrfToken(data.csrfToken);
+    setUser(data.user);
+    setSettings((prev) => ({
+      ...prev,
+      username: data.user.username,
+      displayName: data.user.display_name || "",
+      email: data.user.email || "",
+      emailVerified: !!data.user.email_verified,
+      avatar: data.user.avatar || "",
+      status: data.user.status || "online",
+      customStatus: data.user.custom_status || "",
+      bio: data.user.bio || "",
+      ringtoneUrl: data.user.ringtone_url || "",
+      songTitle: data.user.song_title || "",
+      songArtist: data.user.song_artist || "",
+      songAlbum: data.user.song_album || "",
+      songCoverUrl: data.user.song_cover_url || "",
+      songAudioUrl: data.user.song_audio_url || "",
+      songSource: data.user.song_source || "",
+      songSourceUrl: data.user.song_source_url || "",
+      aliases: data.user.aliases || [],
+    }));
+  }
+
   async function loadUsernames() {
     try {
       const data = await apiFetch("/api/usernames");
@@ -5805,6 +5832,10 @@ export default function App() {
       setConnectionError("Handle required");
       return;
     }
+    if (connectionService === "spotify" && !connectionUrl.trim()) {
+      setConnectionError("Paste a Spotify track link so the profile music card can sync automatically.");
+      return;
+    }
     if (!/^[a-zA-Z0-9._-]+$/.test(connectionHandle.trim())) {
       setConnectionError("Only letters, numbers, ., -, _ allowed");
       return;
@@ -5819,7 +5850,10 @@ export default function App() {
     setConnectionService(null);
     setConnectionHandle("");
     setConnectionUrl("");
-    loadConnections();
+    await loadConnections();
+    if (body.service === "spotify") {
+      await refreshCurrentUser();
+    }
   }
 
   async function toggleConnectionVisibility(id, visible) {
@@ -5829,9 +5863,13 @@ export default function App() {
   }
 
   async function removeConnection(id) {
+    const target = connections.find((c) => c.id === id);
     await apiFetch(`/api/connections/${id}`, { method: "DELETE" });
     setRemoveConnectionId(null);
-    loadConnections();
+    await loadConnections();
+    if (target?.service === "spotify") {
+      await refreshCurrentUser();
+    }
   }
 
   function openRemoveConnection(connection) {
@@ -7324,89 +7362,6 @@ export default function App() {
                         ))}
                       </div>
                     )}
-                  </div>
-
-                  <div className="xp-settings-card">
-                    <div className="xp-settings-title">Profile Music</div>
-                    <div className="xp-settings-sub">
-                      Paste a Spotify track URL to auto-fill the title and artwork. Add a direct MP3 preview URL so others can press play.
-                    </div>
-                    <label className="xp-settings-field">
-                      Spotify track URL
-                      <input
-                        value={musicDraft.sourceUrl}
-                        placeholder="https://open.spotify.com/track/..."
-                        onChange={(e) =>
-                          setMusicDraft((prev) => ({ ...prev, sourceUrl: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <div className="xp-settings-field-grid">
-                      <label className="xp-settings-field">
-                        Song title
-                        <input
-                          value={musicDraft.title}
-                          onChange={(e) =>
-                            setMusicDraft((prev) => ({ ...prev, title: e.target.value }))
-                          }
-                        />
-                      </label>
-                      <label className="xp-settings-field">
-                        Artist
-                        <input
-                          value={musicDraft.artist}
-                          onChange={(e) =>
-                            setMusicDraft((prev) => ({ ...prev, artist: e.target.value }))
-                          }
-                        />
-                      </label>
-                    </div>
-                    <label className="xp-settings-field">
-                      Album
-                      <input
-                        value={musicDraft.album}
-                        onChange={(e) =>
-                          setMusicDraft((prev) => ({ ...prev, album: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <label className="xp-settings-field">
-                      Album cover URL
-                      <input
-                        value={musicDraft.coverUrl}
-                        placeholder="https://..."
-                        onChange={(e) =>
-                          setMusicDraft((prev) => ({ ...prev, coverUrl: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <label className="xp-settings-field">
-                      Audio preview URL
-                      <input
-                        value={musicDraft.audioUrl}
-                        placeholder="https://.../preview.mp3"
-                        onChange={(e) =>
-                          setMusicDraft((prev) => ({ ...prev, audioUrl: e.target.value }))
-                        }
-                      />
-                    </label>
-                    {musicError && <div className="xp-error">{musicError}</div>}
-                    <div className="xp-button-row">
-                      <button
-                        className={`xp-button ${musicSaving ? "is-saving" : ""}`}
-                        onClick={saveProfileSong}
-                        disabled={musicSaving}
-                      >
-                        {musicSaving ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        className="xp-button"
-                        onClick={clearProfileSong}
-                        disabled={musicSaving}
-                      >
-                        Clear
-                      </button>
-                    </div>
                   </div>
 
                   <div className="xp-settings-card">
@@ -9046,8 +9001,21 @@ export default function App() {
               </label>
               <label>
                 Link (optional)
-                <input value={connectionUrl} onChange={(e) => setConnectionUrl(e.target.value)} />
+                <input
+                  value={connectionUrl}
+                  placeholder={
+                    connectionService === "spotify"
+                      ? "https://open.spotify.com/track/..."
+                      : ""
+                  }
+                  onChange={(e) => setConnectionUrl(e.target.value)}
+                />
               </label>
+              {connectionService === "spotify" && (
+                <div className="xp-muted">
+                  Paste a Spotify track link here. The profile music card will sync its title, artist, and cover from this link automatically.
+                </div>
+              )}
               {connectionError && <div className="xp-error">{connectionError}</div>}
               <div className="xp-button-row">
                 <button className="xp-button" onClick={createConnection}>Add</button>

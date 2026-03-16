@@ -774,6 +774,44 @@ async function fetchSpotifyOembed(sourceUrl) {
   }
 }
 
+async function syncSpotifyConnectionSong(userId, spotifyUrl) {
+  const sourceUrl = cleanSongUrl(spotifyUrl || "");
+  if (!sourceUrl) {
+    run(
+      "UPDATE users SET song_title = NULL, song_artist = NULL, song_album = NULL, song_cover_url = NULL, song_audio_url = NULL, song_source = NULL, song_source_url = NULL, song_updated_at = ? WHERE id = ?",
+      [new Date().toISOString(), userId]
+    );
+    return;
+  }
+  let title = "";
+  let artist = "";
+  let coverUrl = null;
+  const meta = await fetchSpotifyOembed(sourceUrl);
+  if (meta?.title) {
+    const parsed = parseSpotifyTitle(meta.title);
+    title = cleanSongText(parsed.title, 120);
+    artist = cleanSongText(parsed.artist, 120);
+  }
+  if (!artist && meta?.author_name) {
+    artist = cleanSongText(meta.author_name, 120);
+  }
+  if (meta?.thumbnail_url) {
+    coverUrl = cleanSongUrl(meta.thumbnail_url);
+  }
+  run(
+    "UPDATE users SET song_title = ?, song_artist = ?, song_album = NULL, song_cover_url = ?, song_audio_url = NULL, song_source = ?, song_source_url = ?, song_updated_at = ? WHERE id = ?",
+    [
+      title,
+      artist,
+      coverUrl,
+      "spotify",
+      sourceUrl,
+      new Date().toISOString(),
+      userId,
+    ]
+  );
+}
+
 const BJ_SUITS = ["H", "D", "C", "S"];
 const BJ_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
@@ -1817,7 +1855,7 @@ app.get("/api/connections/:userId", requireAuth, (req, res) => {
   res.json({ connections: filtered });
 });
 
-app.post("/api/connections", requireAuth, (req, res) => {
+app.post("/api/connections", requireAuth, async (req, res) => {
   const { service, handle, url, visibility } = req.body || {};
   const cleanService = (service || "").trim().toLowerCase();
   const cleanHandle = (handle || "").trim();
@@ -1836,14 +1874,17 @@ app.post("/api/connections", requireAuth, (req, res) => {
     "INSERT INTO connections (user_id, service, handle, url, visibility) VALUES (?, ?, ?, ?, ?)",
     [req.session.userId, cleanService, cleanHandle, cleanUrl || null, cleanVisibility]
   );
+  if (cleanService === "spotify") {
+    await syncSpotifyConnectionSong(req.session.userId, cleanUrl || null);
+  }
   res.json({ ok: true });
 });
 
-app.patch("/api/connections/:id", requireAuth, (req, res) => {
+app.patch("/api/connections/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
   const { handle, url, visibility } = req.body || {};
   const row = getOne(
-    "SELECT id FROM connections WHERE id = ? AND user_id = ?",
+    "SELECT id, service, url FROM connections WHERE id = ? AND user_id = ?",
     [id, req.session.userId]
   );
   if (!row) {
@@ -1871,15 +1912,30 @@ app.patch("/api/connections/:id", requireAuth, (req, res) => {
       id,
     ]);
   }
+  if (row.service === "spotify") {
+    const current = getOne("SELECT url FROM connections WHERE id = ?", [id]);
+    await syncSpotifyConnectionSong(req.session.userId, current?.url || null);
+  }
   res.json({ ok: true });
 });
 
-app.delete("/api/connections/:id", requireAuth, (req, res) => {
+app.delete("/api/connections/:id", requireAuth, async (req, res) => {
   const id = Number(req.params.id);
+  const row = getOne("SELECT service FROM connections WHERE id = ? AND user_id = ?", [
+    id,
+    req.session.userId,
+  ]);
   run("DELETE FROM connections WHERE id = ? AND user_id = ?", [
     id,
     req.session.userId,
   ]);
+  if (row?.service === "spotify") {
+    const remaining = getOne(
+      "SELECT url FROM connections WHERE user_id = ? AND service = 'spotify' ORDER BY datetime(created_at) DESC LIMIT 1",
+      [req.session.userId]
+    );
+    await syncSpotifyConnectionSong(req.session.userId, remaining?.url || null);
+  }
   res.json({ ok: true });
 });
 
