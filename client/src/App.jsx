@@ -2861,26 +2861,40 @@ export default function App() {
   }, [selectedChat?.type, selectedChat?.id]);
 
   useEffect(() => {
-    if (!selectedWalletOption || blackjackWallet || !blackjackPanelOpen) return;
+    const injected = listInjectedWallets();
+    const availableOptions = [...injected];
+    if (WALLETCONNECT_PROJECT_ID) {
+      availableOptions.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect" });
+    }
+    const autoWalletOption =
+      availableOptions.find((option) => option.id === blackjackWalletProviderId) || null;
+    if (!autoWalletOption || blackjackWallet || !blackjackPanelOpen) return;
     if (!blackjackMatch?.chain && !blackjackInvite.chain) return;
-    connectWalletForChain(blackjackMatch?.chain || blackjackInvite.chain, selectedWalletOption, false)
+    connectWalletForChain(blackjackMatch?.chain || blackjackInvite.chain, autoWalletOption, false)
       .then((ctx) => {
         setBlackjackClaimAddress((prev) => prev || ctx.address);
       })
       .catch(() => {});
-  }, [selectedWalletOption, blackjackWallet, blackjackPanelOpen, blackjackMatch?.chain, blackjackInvite.chain]);
+  }, [blackjackWalletProviderId, blackjackWallet, blackjackPanelOpen, blackjackMatch?.chain, blackjackInvite.chain]);
 
   useEffect(() => {
-    if (!selectedWalletOption || !miniGameHubOpen) return;
+    const injected = listInjectedWallets();
+    const availableOptions = [...injected];
+    if (WALLETCONNECT_PROJECT_ID) {
+      availableOptions.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect" });
+    }
+    const autoWalletOption =
+      availableOptions.find((option) => option.id === blackjackWalletProviderId) || null;
+    if (!autoWalletOption || !miniGameHubOpen) return;
     if (!miniGameClaimAddress && !miniGameMatch?.id) return;
     if (!blackjackWallet && (miniGameMatch?.chain || miniGameInvite.chain)) {
-      connectWalletForChain(miniGameMatch?.chain || miniGameInvite.chain, selectedWalletOption, false)
+      connectWalletForChain(miniGameMatch?.chain || miniGameInvite.chain, autoWalletOption, false)
         .then((ctx) => {
           setMiniGameClaimAddress((prev) => prev || ctx.address);
         })
         .catch(() => {});
     }
-  }, [selectedWalletOption, blackjackWallet, miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.chain, miniGameInvite.chain, miniGameClaimAddress]);
+  }, [blackjackWalletProviderId, blackjackWallet, miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.chain, miniGameInvite.chain, miniGameClaimAddress]);
 
   useEffect(() => {
     if (!pttListening) return;
