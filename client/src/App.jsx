@@ -16,7 +16,12 @@ import websiteIcon from "./assets/connections/website.png";
 import xIcon from "./assets/connections/x.png";
 import youtubeIcon from "./assets/connections/youtube.png";
 
-const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
+const DEFAULT_REMOTE_API = "https://spirited-achievement-production-0db7.up.railway.app";
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  (typeof window !== "undefined" && /netlify\.app$/i.test(window.location.hostname)
+    ? DEFAULT_REMOTE_API
+    : window.location.origin || "http://localhost:3001");
 const CHAIN_MODE = import.meta.env.VITE_CHAIN_MODE || "mock";
 const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "";
 const GAME_LOOP_URL = `${API_URL}/bet.mp3`;
