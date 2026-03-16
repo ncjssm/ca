@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
+import { ethers } from "ethers";
 import addIcon from "./assets/add.svg";
 import bellIcon from "./assets/bell.svg";
+import pendingIcon from "./assets/pending.svg";
+import removeIcon from "./assets/remove.svg";
 import discordIcon from "./assets/connections/discord.png";
 import githubIcon from "./assets/connections/github.png";
 import instagramIcon from "./assets/connections/instagram.png";
@@ -14,6 +17,56 @@ import xIcon from "./assets/connections/x.png";
 import youtubeIcon from "./assets/connections/youtube.png";
 
 const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
+const CHAIN_MODE = import.meta.env.VITE_CHAIN_MODE || "mock";
+const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "";
+const GAME_LOOP_URL = `${API_URL}/bet.mp3`;
+const COINFLIP_SFX_URL = `${API_URL}/coinflip.mp3`;
+const BLACKJACK_FACTORY_ABI = [
+  "function deposit(bytes32 matchId) external",
+  "function claim(bytes32 matchId,address recipient) external",
+  "function getMatch(bytes32 matchId) external view returns (address token,uint256 wager,uint64 depositDeadline,address winner,bool finalized,bool settled,address[] memory players,uint256[] memory deposits)",
+];
+const MINI_GAME_FACTORY_ABI = [
+  "function deposit(bytes32 matchId,uint256 amount) external",
+  "function claim(bytes32 matchId,address recipient) external",
+  "function getMatch(bytes32 matchId) external view returns (address token,uint256 fixedWager,uint64 depositDeadline,bool variableDeposit,address winner,bool finalized,bool settled,address[] memory players,uint256[] memory deposits,uint256 totalPot)",
+];
+const ERC20_ABI = [
+  "function approve(address spender,uint256 amount) external returns (bool)",
+  "function allowance(address owner,address spender) external view returns (uint256)",
+  "function decimals() view returns (uint8)",
+];
+const BLACKJACK_CHAIN_LABELS = {
+  base: "Base",
+  arbitrum: "Arbitrum",
+  polygon: "Polygon",
+};
+const BLACKJACK_CHAIN_PARAMS = {
+  base: {
+    chainId: 8453,
+    hexChainId: "0x2105",
+    chainName: "Base",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://mainnet.base.org"],
+    blockExplorerUrls: ["https://basescan.org"],
+  },
+  arbitrum: {
+    chainId: 42161,
+    hexChainId: "0xa4b1",
+    chainName: "Arbitrum One",
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    rpcUrls: ["https://arb1.arbitrum.io/rpc"],
+    blockExplorerUrls: ["https://arbiscan.io"],
+  },
+  polygon: {
+    chainId: 137,
+    hexChainId: "0x89",
+    chainName: "Polygon",
+    nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
+    rpcUrls: ["https://polygon-rpc.com"],
+    blockExplorerUrls: ["https://polygonscan.com"],
+  },
+};
 const STORY_IMAGE_MS = 3500;
 const STORY_VIDEO_MS = 4500;
 const MAX_CUSTOM_STATUS = 13;
@@ -26,6 +79,13 @@ const STATUS_OPTIONS = [
   { value: "away", label: "Idle", color: "#d19a00" },
   { value: "busy", label: "Busy", color: "#c2272d" },
   { value: "invisible", label: "Offline", color: "#6a6f78" },
+];
+
+const BLACKJACK_TOKENS = ["USDC", "USDT", "DAI"];
+const BLACKJACK_CHAINS = [
+  { id: "base", label: "Base" },
+  { id: "arbitrum", label: "Arbitrum" },
+  { id: "polygon", label: "Polygon" },
 ];
 
 const EMOJI_LIST = [":)", ":(", ":D", ";)", "<3", ":O", ":P", ":3", "^_^", ">_<", "(y)", "(n)"];
@@ -63,6 +123,18 @@ const avatarUrl = (avatar, fallbackName) => {
   if (!avatar || avatar === "null" || avatar === "undefined") return defaultAvatar(fallbackName);
   if (avatar.startsWith("http") || avatar.startsWith("data:") || avatar.startsWith("blob:")) return avatar;
   return resolveMediaUrl(avatar);
+};
+
+const resolveUserById = (id, { user, friends, friendsAll, manualDmUsers, allUsers }) => {
+  if (!id) return null;
+  if (user?.id === id) return user;
+  return (
+    friendsAll?.find((u) => u.id === id) ||
+    friends?.find((u) => u.id === id) ||
+    manualDmUsers?.find((u) => u.id === id) ||
+    allUsers?.find((u) => u.id === id) ||
+    null
+  );
 };
 
 const onAvatarError = (event, fallbackName) => {
@@ -127,6 +199,133 @@ function resolveMediaUrl(url) {
   return `${API_URL}${url}`;
 }
 
+let walletConnectInstance = null;
+
+function listInjectedWallets() {
+  if (typeof window === "undefined") return [];
+  const providers = [];
+  const seen = new Set();
+  const pushProvider = (provider, id, label) => {
+    if (!provider || seen.has(id)) return;
+    seen.add(id);
+    providers.push({ id, label, type: "injected", provider });
+  };
+  const root = window.ethereum;
+  const providerList = Array.isArray(root?.providers) ? root.providers : root ? [root] : [];
+  providerList.forEach((provider) => {
+    if (provider?.isMetaMask) pushProvider(provider, "metamask", "MetaMask");
+    if (provider?.isRabby) pushProvider(provider, "rabby", "Rabby");
+    if (provider?.isCoinbaseWallet) pushProvider(provider, "coinbase", "Coinbase Wallet");
+    if (provider?.isExodus) pushProvider(provider, "exodus", "Exodus");
+    if (provider?.isPhantom) pushProvider(provider, "phantom-evm", "Phantom");
+    if (provider?.isTrust || provider?.isTrustWallet) pushProvider(provider, "trust", "Trust Wallet");
+  });
+  if (window.phantom?.ethereum) {
+    pushProvider(window.phantom.ethereum, "phantom-evm", "Phantom");
+  }
+  if (root && providers.length === 0) {
+    pushProvider(root, "browser-wallet", "Browser Wallet");
+  }
+  return providers;
+}
+
+async function getWalletConnectProvider(chain) {
+  if (!WALLETCONNECT_PROJECT_ID) {
+    throw new Error("WalletConnect is not configured. Set VITE_WALLETCONNECT_PROJECT_ID.");
+  }
+  const target = BLACKJACK_CHAIN_PARAMS[chain];
+  if (!target) {
+    throw new Error(`Unsupported chain ${chain}`);
+  }
+  if (!walletConnectInstance) {
+    const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
+    walletConnectInstance = await EthereumProvider.init({
+      projectId: WALLETCONNECT_PROJECT_ID,
+      showQrModal: true,
+      optionalChains: Object.values(BLACKJACK_CHAIN_PARAMS).map((cfg) => cfg.chainId),
+      methods: [
+        "eth_sendTransaction",
+        "eth_signTransaction",
+        "personal_sign",
+        "eth_sign",
+        "eth_signTypedData",
+        "eth_signTypedData_v4",
+      ],
+      rpcMap: Object.fromEntries(
+        Object.values(BLACKJACK_CHAIN_PARAMS).map((cfg) => [cfg.chainId, cfg.rpcUrls[0]])
+      ),
+    });
+  }
+  await walletConnectInstance.connect({
+    optionalChains: [target.chainId],
+  });
+  return walletConnectInstance;
+}
+
+async function ensureWalletChain(rawProvider, chain) {
+  const target = BLACKJACK_CHAIN_PARAMS[chain];
+  if (!target) {
+    throw new Error(`Unsupported chain ${chain}`);
+  }
+  const provider = new ethers.BrowserProvider(rawProvider);
+  const network = await provider.getNetwork();
+  if (Number(network.chainId) === target.chainId) {
+    return provider;
+  }
+  try {
+    await rawProvider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: target.hexChainId }],
+    });
+  } catch (err) {
+    if (err?.code === 4902) {
+      await rawProvider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          {
+            chainId: target.hexChainId,
+            chainName: target.chainName,
+            nativeCurrency: target.nativeCurrency,
+            rpcUrls: target.rpcUrls,
+            blockExplorerUrls: target.blockExplorerUrls,
+          },
+        ],
+      });
+    } else {
+      throw err;
+    }
+  }
+  return new ethers.BrowserProvider(rawProvider);
+}
+
+async function getWalletContext(walletOption, chain, requestAccounts = false) {
+  if (!walletOption) {
+    throw new Error("Choose a wallet first.");
+  }
+  const rawProvider =
+    walletOption.type === "walletconnect"
+      ? await getWalletConnectProvider(chain)
+      : walletOption.provider;
+  if (!rawProvider) {
+    throw new Error("Wallet provider is unavailable.");
+  }
+  const provider = await ensureWalletChain(rawProvider, chain);
+  if (requestAccounts) {
+    await provider.send("eth_requestAccounts", []);
+  }
+  const signer = await provider.getSigner();
+  const address = await signer.getAddress();
+  const network = await provider.getNetwork();
+  return {
+    provider,
+    signer,
+    address,
+    chainId: Number(network.chainId),
+    walletId: walletOption.id,
+    walletLabel: walletOption.label,
+  };
+}
+
 function dataUrlToBlob(dataUrl) {
   if (!dataUrl?.startsWith("data:")) return null;
   const [meta, data] = dataUrl.split(",");
@@ -140,6 +339,81 @@ function dataUrlToBlob(dataUrl) {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mime });
+}
+
+function copyText(value) {
+  if (!value) return Promise.reject(new Error("Nothing to copy"));
+  if (navigator?.clipboard?.writeText) {
+    return navigator.clipboard.writeText(value);
+  }
+  const input = document.createElement("textarea");
+  input.value = value;
+  input.setAttribute("readonly", "");
+  input.style.position = "absolute";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  input.select();
+  document.execCommand("copy");
+  document.body.removeChild(input);
+  return Promise.resolve();
+}
+
+function getAudioStatusIcon(type) {
+  if (type === "deafened") {
+    return (
+      <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+        <path d="M4 13a8 8 0 0 1 16 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path d="M6 13v3a2 2 0 0 0 2 2h1v-5H8a2 2 0 0 0-2 2z" fill="none" stroke="currentColor" strokeWidth="2" />
+        <path d="M18 13v3a2 2 0 0 1-2 2h-1v-5h1a2 2 0 0 1 2 2z" fill="none" stroke="currentColor" strokeWidth="2" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+      <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 18v3" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M4 4l16 16" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function parseNotificationPayload(notification) {
+  if (!notification?.payload) return null;
+  if (typeof notification.payload === "object") return notification.payload;
+  try {
+    return JSON.parse(notification.payload);
+  } catch {
+    return null;
+  }
+}
+
+function isGameInviteExpired(notification, now = Date.now()) {
+  const payload = parseNotificationPayload(notification);
+  const expiresAt = payload?.expiresAt ? new Date(payload.expiresAt).getTime() : NaN;
+  return Number.isFinite(expiresAt) && expiresAt <= now;
+}
+
+function StreamVideo({ stream, muted = true, className = "" }) {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    const node = videoRef.current;
+    if (!node) return;
+    if (node.srcObject !== stream) {
+      node.srcObject = stream || null;
+    }
+    if (stream) {
+      node.play().catch(() => {});
+    }
+    return () => {
+      if (node.srcObject === stream) {
+        node.srcObject = null;
+      }
+    };
+  }, [stream]);
+
+  return <video ref={videoRef} className={className} autoPlay muted={muted} playsInline />;
 }
 
 function chatKey(type, id) {
@@ -372,6 +646,8 @@ export default function App() {
   const [messagesByChat, setMessagesByChat] = useState({});
   const [typingByChat, setTypingByChat] = useState({});
   const [messageInput, setMessageInput] = useState("");
+  const [mentionMenu, setMentionMenu] = useState(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [messageError, setMessageError] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const [sentPulseChat, setSentPulseChat] = useState(null);
@@ -387,6 +663,7 @@ export default function App() {
   const [friendSuccess, setFriendSuccess] = useState("");
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [notificationClock, setNotificationClock] = useState(Date.now());
   const [showNotifications, setShowNotifications] = useState(false);
   const [showChatProfile, setShowChatProfile] = useState(false);
   const [showMutualGroups, setShowMutualGroups] = useState(false);
@@ -407,8 +684,58 @@ export default function App() {
     customStatus: "",
     bio: "",
     ringtoneUrl: "",
+    songTitle: "",
+    songArtist: "",
+    songAlbum: "",
+    songCoverUrl: "",
+    songAudioUrl: "",
+    songSource: "",
+    songSourceUrl: "",
     aliases: [],
   });
+  const [musicDraft, setMusicDraft] = useState({
+    source: "spotify",
+    sourceUrl: "",
+    title: "",
+    artist: "",
+    album: "",
+    coverUrl: "",
+    audioUrl: "",
+  });
+  const [musicSaving, setMusicSaving] = useState(false);
+  const [musicError, setMusicError] = useState("");
+  const [blackjackPanelOpen, setBlackjackPanelOpen] = useState(false);
+  const [blackjackMatch, setBlackjackMatch] = useState(null);
+  const [blackjackInvite, setBlackjackInvite] = useState({
+    wager: "10",
+    token: "USDC",
+    chain: "base",
+    targetId: "",
+  });
+  const [blackjackError, setBlackjackError] = useState("");
+  const [blackjackActionBusy, setBlackjackActionBusy] = useState(false);
+  const [blackjackUiMessage, setBlackjackUiMessage] = useState("");
+  const [blackjackClaimOpen, setBlackjackClaimOpen] = useState(false);
+  const [blackjackClaimAddress, setBlackjackClaimAddress] = useState("");
+  const [blackjackWallet, setBlackjackWallet] = useState("");
+  const [blackjackWalletProviderId, setBlackjackWalletProviderId] = useState("");
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
+  const [walletPickerMode, setWalletPickerMode] = useState("connect");
+  const [miniGameHubOpen, setMiniGameHubOpen] = useState(false);
+  const [miniGameMatch, setMiniGameMatch] = useState(null);
+  const [miniGameInvite, setMiniGameInvite] = useState({
+    gameType: "coinflip",
+    wager: "10",
+    token: "USDC",
+    chain: "base",
+    targetId: "",
+  });
+  const [miniGameError, setMiniGameError] = useState("");
+  const [miniGameBusy, setMiniGameBusy] = useState(false);
+  const [miniGameDepositAmount, setMiniGameDepositAmount] = useState("10");
+  const [miniGameClaimOpen, setMiniGameClaimOpen] = useState(false);
+  const [miniGameClaimAddress, setMiniGameClaimAddress] = useState("");
+  const [miniGameUiMessage, setMiniGameUiMessage] = useState("");
 
   const [theme, setTheme] = useState("classic");
   const [customThemeMedia, setCustomThemeMedia] = useState(null);
@@ -481,6 +808,7 @@ export default function App() {
   const [showChatMenu, setShowChatMenu] = useState(false);
   const [reactionPickerFor, setReactionPickerFor] = useState(null);
   const [showProfileMenu, setShowProfileMenu] = useState(null);
+  const [friendGameMenu, setFriendGameMenu] = useState(null);
   const [groupMemberMenu, setGroupMemberMenu] = useState(null);
   const [groupMembersOpen, setGroupMembersOpen] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -547,8 +875,9 @@ export default function App() {
   const [editGroupConfirmOpen, setEditGroupConfirmOpen] = useState(false);
   const [addMembersModal, setAddMembersModal] = useState(null);
   const [addMembersSelected, setAddMembersSelected] = useState({});
-  const [callState, setCallState] = useState({ status: "idle", withUserId: null, startTime: null, muted: false });
+  const [callState, setCallState] = useState({ status: "idle", withUserId: null, startTime: null, muted: false, deafened: false });
   const callStateRef = useRef(callState);
+  const [callAudioStates, setCallAudioStates] = useState({});
   const [joiningCall, setJoiningCall] = useState(false);
   const [incomingCall, setIncomingCall] = useState(null);
   const [callDuration, setCallDuration] = useState(0);
@@ -589,6 +918,7 @@ export default function App() {
   const micEffectOscRef = useRef(null);
   const micPitchParamRef = useRef(null);
   const micPitchNodeRef = useRef(null);
+  const micBuildSeqRef = useRef(0);
   const lastVoiceEffectRef = useRef("none");
   const lastPitchRef = useRef(0);
   const micAnalyserRef = useRef(null);
@@ -598,11 +928,30 @@ export default function App() {
   const ringGainRef = useRef(null);
   const ringTimerRef = useRef(null);
   const ringtoneAudioRef = useRef(null);
+  const profileSongAudioRef = useRef(null);
+  const gameMusicAudioRef = useRef(null);
+  const coinflipSfxAudioRef = useRef(null);
+  const gameMusicFadeRef = useRef(null);
+  const lastCoinflipSfxRef = useRef("");
+  const blackjackSfxCtxRef = useRef(null);
+  const prevBlackjackSnapshotRef = useRef(null);
+  const [profileSongPlayer, setProfileSongPlayer] = useState({
+    ownerId: null,
+    title: "",
+    artist: "",
+    album: "",
+    coverUrl: "",
+    audioUrl: "",
+    playing: false,
+  });
+  const profileSongPlayerRef = useRef(profileSongPlayer);
   const [pushToTalk, setPushToTalk] = useState(false);
   const [pttKeybind, setPttKeybind] = useState("");
   const [pttListening, setPttListening] = useState(false);
   const [pttActive, setPttActive] = useState(false);
   const [groupCall, setGroupCall] = useState({ groupId: null, status: "idle", participants: [], startedAt: null });
+  const groupCallRef = useRef(groupCall);
+  const [groupCallAudioStates, setGroupCallAudioStates] = useState({});
   const [incomingGroupCall, setIncomingGroupCall] = useState(null);
   const [groupShares, setGroupShares] = useState({});
   const [dmShareStream, setDmShareStream] = useState(null);
@@ -610,11 +959,13 @@ export default function App() {
   const [screenShareWindow, setScreenShareWindow] = useState({ open: false, label: "" });
   const [screenShareError, setScreenShareError] = useState("");
   const [dmShareActive, setDmShareActive] = useState(false);
+  const [gameAudioMuted, setGameAudioMuted] = useState(false);
 
   const socketRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const typingTimersRef = useRef({});
   const fileInputRef = useRef(null);
+  const messageInputRef = useRef(null);
   const audioInputRef = useRef(null);
   const chatBodyRef = useRef(null);
   const recorderRef = useRef(null);
@@ -686,10 +1037,15 @@ export default function App() {
 
   function startRingTone() {
     if (settings.ringtoneUrl) {
-      if (!ringtoneAudioRef.current) {
-        const audio = new Audio(resolveMediaUrl(settings.ringtoneUrl));
+      const ringtoneSrc = resolveMediaUrl(settings.ringtoneUrl);
+      if (!ringtoneAudioRef.current || ringtoneAudioRef.current.src !== ringtoneSrc) {
+        if (ringtoneAudioRef.current) {
+          ringtoneAudioRef.current.pause();
+        }
+        const audio = new Audio(ringtoneSrc);
         audio.loop = true;
         audio.volume = 0.7;
+        audio.preload = "auto";
         ringtoneAudioRef.current = audio;
       }
       ringtoneAudioRef.current.currentTime = 0;
@@ -725,6 +1081,133 @@ export default function App() {
       ringCtxRef.current.close().catch(() => {});
       ringCtxRef.current = null;
     }
+  }
+
+  useEffect(() => {
+    if (settings.ringtoneUrl) return;
+    if (ringtoneAudioRef.current) {
+      ringtoneAudioRef.current.pause();
+      ringtoneAudioRef.current = null;
+    }
+  }, [settings.ringtoneUrl]);
+
+  function fadeGameMusic(targetVolume, duration = 500) {
+    const audio = gameMusicAudioRef.current;
+    if (!audio) return;
+    if (gameMusicFadeRef.current) {
+      clearInterval(gameMusicFadeRef.current);
+      gameMusicFadeRef.current = null;
+    }
+    const startVolume = Number(audio.volume || 0);
+    const steps = Math.max(1, Math.floor(duration / 40));
+    const delta = (targetVolume - startVolume) / steps;
+    let step = 0;
+    gameMusicFadeRef.current = setInterval(() => {
+      step += 1;
+      const next = step >= steps ? targetVolume : Math.min(1, Math.max(0, startVolume + delta * step));
+      audio.volume = next;
+      if (step >= steps) {
+        clearInterval(gameMusicFadeRef.current);
+        gameMusicFadeRef.current = null;
+        if (targetVolume <= 0.001) {
+          audio.pause();
+        }
+      }
+    }, 40);
+  }
+
+  function playBlackjackTone({
+    type = "sine",
+    start = 520,
+    end = 420,
+    duration = 0.12,
+    gain = 0.035,
+    delay = 0,
+  }) {
+    if (gameAudioMuted) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = blackjackSfxCtxRef.current || new Ctx();
+      blackjackSfxCtxRef.current = ctx;
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+      const now = ctx.currentTime + delay;
+      const osc = ctx.createOscillator();
+      const amp = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(start, now);
+      osc.frequency.exponentialRampToValueAtTime(Math.max(80, end), now + duration);
+      amp.gain.setValueAtTime(0.0001, now);
+      amp.gain.exponentialRampToValueAtTime(gain, now + 0.02);
+      amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      osc.connect(amp);
+      amp.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + duration + 0.02);
+    } catch {
+      // ignore audio failures
+    }
+  }
+
+  function playBlackjackDealSound(count = 1) {
+    for (let i = 0; i < count; i += 1) {
+      playBlackjackTone({
+        type: "triangle",
+        start: 920,
+        end: 650,
+        duration: 0.08,
+        gain: 0.02,
+        delay: i * 0.05,
+      });
+    }
+  }
+
+  function extractProfileSong(profile) {
+    if (!profile) return null;
+    return {
+      title: profile.song_title || "",
+      artist: profile.song_artist || "",
+      album: profile.song_album || "",
+      coverUrl: profile.song_cover_url || "",
+      audioUrl: profile.song_audio_url || "",
+      source: profile.song_source || "",
+      sourceUrl: profile.song_source_url || "",
+      updatedAt: profile.song_updated_at || "",
+    };
+  }
+
+  function applyProfileSongUpdate(userId, payload) {
+    const nextSong = extractProfileSong(payload);
+    if (!nextSong) return;
+    setProfileSongPlayer((prev) => {
+      if (prev.ownerId !== userId) return prev;
+      if (!nextSong.audioUrl) {
+        return { ...prev, ...nextSong, playing: false };
+      }
+      return { ...prev, ...nextSong };
+    });
+  }
+
+  function toggleProfileSong(profile) {
+    if (!profile?.id) return;
+    const song = extractProfileSong(profile);
+    if (!song?.audioUrl) return;
+    setProfileSongPlayer((prev) => {
+      if (prev.ownerId === profile.id) {
+        return { ...prev, playing: !prev.playing };
+      }
+      return {
+        ownerId: profile.id,
+        title: song.title,
+        artist: song.artist,
+        album: song.album,
+        coverUrl: song.coverUrl,
+        audioUrl: song.audioUrl,
+        playing: true,
+      };
+    });
   }
 
   function playCallChime(type = "join") {
@@ -792,6 +1275,10 @@ export default function App() {
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
+
+  useEffect(() => {
+    groupCallRef.current = groupCall;
+  }, [groupCall]);
 
   const themeKey = user ? `xp-theme:${user.id}` : "xp-theme";
   const dmBgKey = user ? `xp-dm-bg:${user.id}` : "xp-dm-bg";
@@ -927,7 +1414,23 @@ export default function App() {
             customStatus: data.user.custom_status || "",
             bio: data.user.bio || "",
             ringtoneUrl: data.user.ringtone_url || "",
+            songTitle: data.user.song_title || "",
+            songArtist: data.user.song_artist || "",
+            songAlbum: data.user.song_album || "",
+            songCoverUrl: data.user.song_cover_url || "",
+            songAudioUrl: data.user.song_audio_url || "",
+            songSource: data.user.song_source || "",
+            songSourceUrl: data.user.song_source_url || "",
             aliases: data.user.aliases || [],
+          });
+          setMusicDraft({
+            source: data.user.song_source || "spotify",
+            sourceUrl: data.user.song_source_url || "",
+            title: data.user.song_title || "",
+            artist: data.user.song_artist || "",
+            album: data.user.song_album || "",
+            coverUrl: data.user.song_cover_url || "",
+            audioUrl: data.user.song_audio_url || "",
           });
           setCustomStatusInput(data.user.custom_status || "");
           setAboutInput(data.user.bio || "");
@@ -1061,6 +1564,9 @@ export default function App() {
       if (profileUser?.id === payload.id) {
         setProfileUser((prev) => ({ ...prev, ...payload }));
       }
+      if (profileSongPlayerRef.current?.ownerId === payload.id) {
+        applyProfileSongUpdate(payload.id, payload);
+      }
     });
 
     socket.on("presence:update", ({ userId, status }) => {
@@ -1131,7 +1637,8 @@ export default function App() {
       if (!otherId) return;
       if (callStateRef.current?.status === "in-call") return;
       setIncomingCall(null);
-      setCallState({ status: "calling", withUserId: otherId, startTime: null, muted: false });
+      setCallState({ status: "calling", withUserId: otherId, startTime: null, muted: false, deafened: false });
+      setCallAudioStates({});
     });
 
     socket.on("call:accept", async ({ fromId }) => {
@@ -1139,38 +1646,49 @@ export default function App() {
       callEndedRef.current = false;
       await ensurePeer(fromId);
       await createOffer(fromId);
-      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false });
+      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false, deafened: false });
       playCallChime("join");
     });
 
     socket.on("call:decline", () => {
       setIncomingCall(null);
-      setCallState({ status: "idle", withUserId: null, startTime: null, muted: false });
+      setCallState({ status: "idle", withUserId: null, startTime: null, muted: false, deafened: false });
+      setCallAudioStates({});
       teardownPeer();
     });
 
-    socket.on("call:active", ({ otherId, startedAt }) => {
+    socket.on("call:active", ({ otherId, startedAt, audioStates }) => {
       setIncomingCall(null);
       setCallState({
         status: "active",
         withUserId: otherId,
         startTime: startedAt || Date.now(),
         muted: false,
+        deafened: false,
       });
+      setCallAudioStates(audioStates || {});
     });
 
     socket.on("call:timeout", () => {
       // call stays joinable; keep it active
-      if (callState.withUserId) {
+      if (callStateRef.current?.withUserId) {
         setCallState((prev) => ({ ...prev, status: "active" }));
       }
     });
 
     socket.on("call:end", () => {
       callEndedRef.current = true;
-      setCallState({ status: "idle", withUserId: null, startTime: null, muted: false });
+      setCallState({ status: "idle", withUserId: null, startTime: null, muted: false, deafened: false });
+      setCallAudioStates({});
       setRemotePresent(false);
       teardownPeer();
+    });
+
+    socket.on("call:status", ({ userId: statusUserId, muted, deafened }) => {
+      setCallAudioStates((prev) => ({
+        ...prev,
+        [statusUserId]: { muted: !!muted, deafened: !!deafened },
+      }));
     });
 
     socket.on("call:joined", () => {
@@ -1207,7 +1725,7 @@ export default function App() {
       const answer = await pcRef.current.createAnswer();
       await pcRef.current.setLocalDescription(answer);
       socket.emit("call:answer", { toId: fromId, answer });
-      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false });
+      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false, deafened: false });
     });
 
     socket.on("call:answer", async ({ answer }) => {
@@ -1218,6 +1736,22 @@ export default function App() {
       } catch {
         // ignore
       }
+    });
+
+    socket.on("blackjack:state", (payload) => {
+      if (!payload?.id) return;
+      setBlackjackMatch((prev) => {
+        if (!prev || prev.id === payload.id) return payload;
+        return prev;
+      });
+    });
+
+    socket.on("minigame:state", (payload) => {
+      if (!payload?.id) return;
+      setMiniGameMatch((prev) => {
+        if (!prev || prev.id === payload.id) return payload;
+        return prev;
+      });
     });
 
     socket.on("call:ice", async ({ candidate }) => {
@@ -1233,13 +1767,14 @@ export default function App() {
       if (callEndedRef.current) return;
       await ensurePeer(fromId);
       await createOffer(fromId);
-      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false });
+      setCallState({ status: "in-call", withUserId: fromId, startTime: Date.now(), muted: false, deafened: false });
     });
 
-    socket.on("call:rejoin-ack", async ({ otherId, startedAt }) => {
+    socket.on("call:rejoin-ack", async ({ otherId, startedAt, audioStates }) => {
       if (callEndedRef.current) return;
       await ensurePeer(otherId);
-      setCallState({ status: "in-call", withUserId: otherId, startTime: startedAt || Date.now(), muted: false });
+      setCallState({ status: "in-call", withUserId: otherId, startTime: startedAt || Date.now(), muted: false, deafened: false });
+      setCallAudioStates(audioStates || {});
       setJoiningCall(false);
     });
 
@@ -1258,14 +1793,15 @@ export default function App() {
       }));
     });
 
-    socket.on("group:call:participants", ({ groupId, participants, startedAt }) => {
+    socket.on("group:call:participants", ({ groupId, participants, startedAt, audioStates }) => {
       setGroupCallVisible(true);
       setGroupCall({ groupId, status: "in-call", participants, startedAt });
+      setGroupCallAudioStates(audioStates || {});
       participants.forEach((pid) => setupGroupPeer(groupId, pid));
     });
 
     socket.on("group:call:join", ({ groupId, userId }) => {
-      if (groupCall.groupId !== groupId) return;
+      if (groupCallRef.current?.groupId !== groupId) return;
       setGroupCallVisible(true);
       setGroupCall((prev) => ({
         ...prev,
@@ -1279,29 +1815,45 @@ export default function App() {
     });
 
     socket.on("group:call:leave", ({ groupId, userId }) => {
-      if (groupCall.groupId !== groupId) return;
+      if (groupCallRef.current?.groupId !== groupId) return;
       cleanupGroupPeer(userId);
       setGroupCall((prev) => ({
         ...prev,
         participants: prev.participants.filter((id) => id !== userId),
       }));
+      setGroupCallAudioStates((prev) => {
+        const next = { ...prev };
+        delete next[userId];
+        return next;
+      });
       if (userId !== user.id) {
         playCallChime("leave");
       }
     });
 
-    socket.on("group:call:active", ({ groupId, startedAt }) => {
-      if (groupCall.groupId !== groupId) return;
+    socket.on("group:call:active", ({ groupId, startedAt, audioStates }) => {
+      if (groupCallRef.current?.groupId !== groupId) return;
       setGroupCallVisible(true);
       setGroupCall((prev) => ({
         ...prev,
         status: "in-call",
         startedAt: prev.startedAt || startedAt || Date.now(),
       }));
+      if (audioStates) {
+        setGroupCallAudioStates(audioStates);
+      }
+    });
+
+    socket.on("group:call:status", ({ groupId, userId: statusUserId, muted, deafened }) => {
+      if (groupCallRef.current?.groupId !== groupId) return;
+      setGroupCallAudioStates((prev) => ({
+        ...prev,
+        [statusUserId]: { muted: !!muted, deafened: !!deafened },
+      }));
     });
 
     socket.on("group:call:timeout", ({ groupId }) => {
-      if (groupCall.groupId !== groupId) return;
+      if (groupCallRef.current?.groupId !== groupId) return;
       setGroupCall((prev) => ({
         ...prev,
         status: "in-call",
@@ -1310,7 +1862,7 @@ export default function App() {
     });
 
     socket.on("group:call:ended", ({ groupId }) => {
-      if (groupCall.groupId === groupId) {
+      if (groupCallRef.current?.groupId === groupId) {
         setGroupCallVisible(false);
         cleanupGroupCall();
       }
@@ -1571,6 +2123,13 @@ export default function App() {
   }, [storyViewer.open]);
 
   useEffect(() => {
+    const id = setInterval(() => {
+      setNotificationClock(Date.now());
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
     if (!callState.startTime) return;
     const id = setInterval(() => {
       setCallDuration((Date.now() - callState.startTime) / 1000);
@@ -1608,6 +2167,10 @@ export default function App() {
       if (el) el.volume = callSettings.speakerVolume;
     });
   }, [callSettings.speakerVolume, groupCall.participants]);
+
+  useEffect(() => {
+    applyOutputDevice(callSettings.outputId || "");
+  }, [callSettings.outputId, groupCall.participants, remotePresent]);
 
   useEffect(() => {
     return () => {
@@ -1770,29 +2333,39 @@ export default function App() {
   }
 
   async function applyInputDevice(deviceId) {
+    const buildSeq = ++micBuildSeqRef.current;
     if (rawMicStreamRef.current) {
       rawMicStreamRef.current.getTracks().forEach((t) => t.stop());
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: getHiFiAudioConstraints(deviceId),
     });
+    if (buildSeq !== micBuildSeqRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     rawMicStreamRef.current = stream;
-    await rebuildAudioGraph(stream);
+    await rebuildAudioGraph(stream, buildSeq);
   }
 
   async function ensureProcessedMic() {
     if (rawMicStreamRef.current && localStreamRef.current) return;
+    const buildSeq = ++micBuildSeqRef.current;
     if (rawMicStreamRef.current) {
       rawMicStreamRef.current.getTracks().forEach((t) => t.stop());
     }
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: getHiFiAudioConstraints(),
     });
+    if (buildSeq !== micBuildSeqRef.current) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
     rawMicStreamRef.current = stream;
-    await rebuildAudioGraph(stream);
+    await rebuildAudioGraph(stream, buildSeq);
   }
 
-  async function rebuildAudioGraph(inputStream) {
+  async function rebuildAudioGraph(inputStream, buildSeq = ++micBuildSeqRef.current) {
     if (!inputStream) return;
     const safePitch = Math.max(-10, Math.min(10, pitchShift));
     let ctx;
@@ -1803,6 +2376,10 @@ export default function App() {
       });
       await ctx.resume();
     } catch {
+      return;
+    }
+    if (buildSeq !== micBuildSeqRef.current) {
+      ctx.close().catch(() => {});
       return;
     }
     if (ctx.state === "closed") return;
@@ -1896,6 +2473,10 @@ export default function App() {
             window.__pitchWorkletUrl = URL.createObjectURL(blob);
           }
           await ctx.audioWorklet.addModule(window.__pitchWorkletUrl);
+          if (buildSeq !== micBuildSeqRef.current) {
+            ctx.close().catch(() => {});
+            return;
+          }
           const shifter = new AudioWorkletNode(ctx, "pitch-shift-processor", {
             parameterData: { rate },
           });
@@ -1969,6 +2550,7 @@ export default function App() {
     comp.connect(dest);
 
     localStreamRef.current = dest.stream;
+    applyOutgoingAudioState(callStateRef.current?.muted, callStateRef.current?.deafened);
     setAudioStreamTick((n) => n + 1);
     const track = dest.stream.getAudioTracks()[0];
     async function applySenderParams(sender) {
@@ -2104,6 +2686,208 @@ export default function App() {
     }
     return () => stopRingTone();
   }, [callState.status, incomingCall, groupCall.status, incomingGroupCall]);
+
+  useEffect(() => {
+    profileSongPlayerRef.current = profileSongPlayer;
+  }, [profileSongPlayer]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const stored = localStorage.getItem(`xp-game-audio-muted:${user.id}`);
+    if (stored === "1") {
+      setGameAudioMuted(true);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    localStorage.setItem(`xp-game-audio-muted:${user.id}`, gameAudioMuted ? "1" : "0");
+  }, [user?.id, gameAudioMuted]);
+
+  useEffect(() => {
+    const audio = profileSongAudioRef.current;
+    if (!audio) return;
+    audio.onended = () => {
+      setProfileSongPlayer((prev) => ({ ...prev, playing: false }));
+    };
+    audio.volume = 0.85;
+    return () => {
+      audio.onended = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const audio = profileSongAudioRef.current;
+    if (!audio) return;
+    if (profileSongPlayer.audioUrl) {
+      audio.src = resolveMediaUrl(profileSongPlayer.audioUrl);
+      audio.currentTime = 0;
+      if (profileSongPlayer.playing) {
+        audio.play().catch(() => {});
+      }
+    } else {
+      audio.removeAttribute("src");
+      audio.load();
+    }
+  }, [profileSongPlayer.audioUrl]);
+
+  useEffect(() => {
+    const audio = profileSongAudioRef.current;
+    if (!audio) return;
+    if (!profileSongPlayer.audioUrl) return;
+    if (profileSongPlayer.playing) {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  }, [profileSongPlayer.playing, profileSongPlayer.audioUrl]);
+
+  useEffect(() => {
+    const audio = gameMusicAudioRef.current;
+    if (!audio) return;
+    audio.loop = true;
+    audio.preload = "auto";
+    audio.src = GAME_LOOP_URL;
+    audio.volume = 0;
+  }, []);
+
+  useEffect(() => {
+    const audio = coinflipSfxAudioRef.current;
+    if (!audio) return;
+    audio.preload = "auto";
+    audio.src = COINFLIP_SFX_URL;
+    audio.volume = gameAudioMuted ? 0 : 0.92;
+  }, [gameAudioMuted]);
+
+  const shouldPlayGameMusic = (blackjackPanelOpen || miniGameHubOpen) && !gameAudioMuted;
+
+  useEffect(() => {
+    const audio = gameMusicAudioRef.current;
+    if (!audio) return;
+    if (shouldPlayGameMusic) {
+      audio.play().catch(() => {});
+      fadeGameMusic(0.24, 520);
+    } else {
+      fadeGameMusic(0, 380);
+    }
+    return () => {
+      if (gameMusicFadeRef.current) {
+        clearInterval(gameMusicFadeRef.current);
+        gameMusicFadeRef.current = null;
+      }
+    };
+  }, [shouldPlayGameMusic]);
+
+  useEffect(() => {
+    if (gameAudioMuted) return;
+    if (miniGameMatch?.game_type !== "coinflip") return;
+    if (miniGameMatch?.status !== "ended") return;
+    if (!miniGameMatch?.state?.result) return;
+    const key = `${miniGameMatch.id}:${miniGameMatch.state.result}`;
+    if (lastCoinflipSfxRef.current === key) return;
+    lastCoinflipSfxRef.current = key;
+    const audio = coinflipSfxAudioRef.current;
+    if (!audio) return;
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }, [miniGameMatch?.id, miniGameMatch?.game_type, miniGameMatch?.status, miniGameMatch?.state?.result, gameAudioMuted]);
+
+  useEffect(() => {
+    const match = blackjackMatch;
+    if (!match?.id || !blackjackState) {
+      prevBlackjackSnapshotRef.current = null;
+      return;
+    }
+    const snapshot = {
+      status: match.status,
+      dealerCards: (blackjackState.dealer?.cards || []).length,
+      dealerReveal: blackjackState.dealer?.status === "reveal",
+      playerCardCounts: Object.fromEntries(
+        Object.entries(blackjackState.players || {}).map(([playerId, info]) => [
+          playerId,
+          (info?.hands || []).reduce((sum, hand) => sum + (hand?.cards?.length || 0), 0),
+        ])
+      ),
+      winnerId: match.winner_id || null,
+    };
+    const prev = prevBlackjackSnapshotRef.current;
+    if (prev) {
+      const prevTotal =
+        prev.dealerCards + Object.values(prev.playerCardCounts || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+      const nextTotal =
+        snapshot.dealerCards + Object.values(snapshot.playerCardCounts || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+      if (nextTotal > prevTotal) {
+        playBlackjackDealSound(nextTotal - prevTotal);
+      }
+      if (snapshot.dealerReveal && !prev.dealerReveal) {
+        playBlackjackTone({ type: "square", start: 420, end: 260, duration: 0.09, gain: 0.028 });
+      }
+      if (snapshot.status === "ended" && prev.status !== "ended") {
+        if (snapshot.winnerId === user?.id) {
+          playBlackjackTone({ type: "triangle", start: 540, end: 880, duration: 0.18, gain: 0.032 });
+          playBlackjackTone({ type: "triangle", start: 760, end: 1180, duration: 0.22, gain: 0.026, delay: 0.08 });
+        } else {
+          playBlackjackTone({ type: "sawtooth", start: 320, end: 140, duration: 0.22, gain: 0.026 });
+        }
+      }
+    }
+    prevBlackjackSnapshotRef.current = snapshot;
+  }, [blackjackMatch?.id, blackjackMatch?.status, blackjackMatch?.winner_id, blackjackState, user?.id, gameAudioMuted]);
+
+  useEffect(() => {
+    if (!blackjackPanelOpen || !blackjackMatch?.id) return undefined;
+    if (blackjackMatch.status !== "deposit" && blackjackMatch.status !== "ended") return undefined;
+    if (CHAIN_MODE !== "evm") return undefined;
+    const timer = setInterval(() => {
+      apiFetch(`/api/blackjack/${blackjackMatch.id}/sync`, { method: "POST" })
+        .then((res) => {
+          if (res?.match) setBlackjackMatch(res.match);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [blackjackPanelOpen, blackjackMatch?.id, blackjackMatch?.status]);
+
+  useEffect(() => {
+    if (!miniGameHubOpen || !miniGameMatch?.id) return undefined;
+    if (miniGameMatch.status !== "deposit" && miniGameMatch.status !== "ended") return undefined;
+    if (CHAIN_MODE !== "evm") return undefined;
+    const timer = setInterval(() => {
+      apiFetch(`/api/minigames/${miniGameMatch.id}/sync`, { method: "POST" })
+        .then((res) => {
+          if (res?.match) setMiniGameMatch(res.match);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.status]);
+
+  useEffect(() => {
+    setMentionMenu(null);
+    setMentionIndex(0);
+  }, [selectedChat?.type, selectedChat?.id]);
+
+  useEffect(() => {
+    if (!selectedWalletOption || blackjackWallet || !blackjackPanelOpen) return;
+    if (!blackjackMatch?.chain && !blackjackInvite.chain) return;
+    connectWalletForChain(blackjackMatch?.chain || blackjackInvite.chain, selectedWalletOption, false)
+      .then((ctx) => {
+        setBlackjackClaimAddress((prev) => prev || ctx.address);
+      })
+      .catch(() => {});
+  }, [selectedWalletOption, blackjackWallet, blackjackPanelOpen, blackjackMatch?.chain, blackjackInvite.chain]);
+
+  useEffect(() => {
+    if (!selectedWalletOption || !miniGameHubOpen) return;
+    if (!miniGameClaimAddress && !miniGameMatch?.id) return;
+    if (!blackjackWallet && (miniGameMatch?.chain || miniGameInvite.chain)) {
+      connectWalletForChain(miniGameMatch?.chain || miniGameInvite.chain, selectedWalletOption, false)
+        .then((ctx) => {
+          setMiniGameClaimAddress((prev) => prev || ctx.address);
+        })
+        .catch(() => {});
+    }
+  }, [selectedWalletOption, blackjackWallet, miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.chain, miniGameInvite.chain, miniGameClaimAddress]);
 
   useEffect(() => {
     if (!pttListening) return;
@@ -2505,7 +3289,23 @@ export default function App() {
   }
 
   async function ensurePeer(otherId) {
-    if (pcRef.current) return;
+    if (pcRef.current) {
+      const currentState = pcRef.current.connectionState;
+      const iceState = pcRef.current.iceConnectionState;
+      const unusable =
+        currentState === "closed" ||
+        currentState === "failed" ||
+        currentState === "disconnected" ||
+        iceState === "closed" ||
+        iceState === "failed";
+      if (!unusable) return;
+      try {
+        pcRef.current.close();
+      } catch {
+        // ignore
+      }
+      pcRef.current = null;
+    }
     const pc = new RTCPeerConnection(STUN_CONFIG);
     pcRef.current = pc;
 
@@ -2561,11 +3361,26 @@ export default function App() {
         return;
       }
       if (state === "disconnected" || state === "failed") {
+        if (state === "failed") {
+          try {
+            pc.restartIce();
+          } catch {
+            // ignore
+          }
+        }
         const current = callStateRef.current;
         if (current?.withUserId && current.status !== "idle" && !callEndedRef.current) {
           setCallState((prev) => ({ ...prev, status: "reconnecting" }));
           setTimeout(() => {
             if (!callEndedRef.current && pc.connectionState !== "connected" && callStateRef.current?.withUserId) {
+              if (pcRef.current === pc) {
+                try {
+                  pc.close();
+                } catch {
+                  // ignore
+                }
+                pcRef.current = null;
+              }
               socketRef.current?.emit("call:rejoin", { toId: callStateRef.current.withUserId });
             }
           }, 1200);
@@ -2740,7 +3555,8 @@ export default function App() {
     callEndedRef.current = false;
     await ensurePeer(otherId);
     socketRef.current?.emit("call:request", { toId: otherId });
-    setCallState({ status: "calling", withUserId: otherId, startTime: null, muted: false });
+    setCallState({ status: "calling", withUserId: otherId, startTime: null, muted: false, deafened: false });
+    setCallAudioStates({});
   }
 
   function joinCall(otherId) {
@@ -2768,6 +3584,18 @@ export default function App() {
     if (!incomingCall) return;
     socketRef.current?.emit("call:decline", { toId: incomingCall.fromId });
     setIncomingCall(null);
+    setCallState({ status: "idle", withUserId: null, startTime: null, muted: false, deafened: false });
+    setCallAudioStates({});
+    teardownPeer();
+  }
+
+  function cancelOutgoingCall() {
+    if (callState.status !== "calling" || !callState.withUserId) return;
+    socketRef.current?.emit("call:end", { toId: callState.withUserId });
+    callEndedRef.current = true;
+    setCallState({ status: "idle", withUserId: null, startTime: null, muted: false, deafened: false });
+    setCallAudioStates({});
+    teardownPeer();
   }
 
   function endCall() {
@@ -2780,17 +3608,92 @@ export default function App() {
     teardownPeer();
   }
 
-  function toggleMute() {
-    const nextMuted = !callState.muted;
+  function applyOutgoingAudioState(muted, deafened) {
+    const shouldMute = !!muted || !!deafened;
     const tracks = localStreamRef.current?.getAudioTracks?.() || [];
     tracks.forEach((t) => {
-      t.enabled = !nextMuted;
+      t.enabled = !shouldMute;
     });
     if (micGainNodeRef.current) {
-      micGainNodeRef.current.gain.value = nextMuted ? 0 : (callSettings.micVolume ?? 1);
+      micGainNodeRef.current.gain.value = shouldMute ? 0 : (callSettings.micVolume ?? 1);
     }
+  }
+
+  function applyIncomingAudioState(deafened) {
+    const remoteAudio = document.getElementById("xp-remote-audio");
+    if (remoteAudio) {
+      remoteAudio.muted = !!deafened;
+      remoteAudio.volume = callSettings.speakerVolume ?? 1;
+    }
+    document.querySelectorAll("[id^='xp-group-audio-']").forEach((node) => {
+      node.muted = !!deafened;
+      node.volume = callSettings.speakerVolume ?? 1;
+    });
+  }
+
+  function toggleMute() {
+    const nextMuted = !callState.muted;
+    applyOutgoingAudioState(nextMuted, callState.deafened);
     setCallState((prev) => ({ ...prev, muted: nextMuted }));
   }
+
+  function toggleDeafen() {
+    const nextDeafened = !callState.deafened;
+    applyOutgoingAudioState(callState.muted, nextDeafened);
+    applyIncomingAudioState(nextDeafened);
+    setCallState((prev) => ({ ...prev, deafened: nextDeafened }));
+  }
+
+  function emitDirectCallStatus(nextState = callStateRef.current) {
+    const otherId = nextState?.withUserId;
+    if (!otherId) return;
+    if (nextState.status !== "in-call" && nextState.status !== "active" && nextState.status !== "reconnecting") return;
+    socketRef.current?.emit("call:status", {
+      toId: otherId,
+      muted: !!nextState.muted,
+      deafened: !!nextState.deafened,
+    });
+    setCallAudioStates((prev) => ({
+      ...prev,
+      [user?.id]: { muted: !!nextState.muted, deafened: !!nextState.deafened },
+    }));
+  }
+
+  function emitGroupCallStatus(nextStatus) {
+    if (!groupCall.groupId || groupCall.status !== "in-call") return;
+    socketRef.current?.emit("group:call:status", {
+      groupId: groupCall.groupId,
+      muted: !!nextStatus.muted,
+      deafened: !!nextStatus.deafened,
+    });
+    setGroupCallAudioStates((prev) => ({
+      ...prev,
+      [user?.id]: { muted: !!nextStatus.muted, deafened: !!nextStatus.deafened },
+    }));
+  }
+
+  useEffect(() => {
+    applyOutgoingAudioState(callState.muted, callState.deafened);
+    applyIncomingAudioState(callState.deafened);
+  }, [callState.muted, callState.deafened, callSettings.micVolume, callSettings.speakerVolume]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    if (callState.withUserId && (callState.status === "in-call" || callState.status === "active" || callState.status === "reconnecting")) {
+      emitDirectCallStatus(callState);
+    }
+    if (groupCall.groupId && groupCall.status === "in-call") {
+      emitGroupCallStatus(callState);
+    }
+  }, [
+    callState.muted,
+    callState.deafened,
+    callState.status,
+    callState.withUserId,
+    groupCall.groupId,
+    groupCall.status,
+    user?.id,
+  ]);
 
   useEffect(() => {
     if (!callState.withUserId || callState.status !== "in-call" || !pcRef.current) {
@@ -2912,18 +3815,23 @@ export default function App() {
     audio.srcObject = stream;
     audio.autoplay = true;
     audio.playsInline = true;
-    audio.muted = false;
+    audio.muted = !!callStateRef.current?.deafened;
     audio.volume = callSettings.speakerVolume ?? 1;
     audio.play().catch(() => {});
   }
 
   function teardownPeer() {
+    micBuildSeqRef.current += 1;
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
     }
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
+    rawMicStreamRef.current?.getTracks().forEach((t) => t.stop());
+    rawMicStreamRef.current = null;
+    micGainCtxRef.current?.close?.().catch?.(() => {});
+    micGainCtxRef.current = null;
     dmLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     dmLocalScreenRef.current = null;
     dmScreenVideoSenderRef.current = null;
@@ -2933,6 +3841,11 @@ export default function App() {
     setScreenShareWindow((prev) => ({ ...prev, open: false }));
     setDmShareActive(false);
     remoteStreamRef.current = null;
+    const audio = document.getElementById("xp-remote-audio");
+    if (audio) {
+      audio.pause?.();
+      audio.srcObject = null;
+    }
   }
 
   async function startGroupCall(groupId) {
@@ -2991,6 +3904,8 @@ export default function App() {
         const audio = document.getElementById(`xp-group-audio-${peerId}`);
         if (audio && stream) {
           audio.srcObject = stream;
+          audio.muted = !!callStateRef.current?.deafened;
+          audio.volume = callSettings.speakerVolume ?? 1;
           audio.play().catch(() => {});
         }
       }
@@ -3040,6 +3955,7 @@ export default function App() {
     groupLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     groupLocalScreenRef.current = null;
     setGroupCall({ groupId: null, status: "idle", participants: [], startedAt: null });
+    setGroupCallAudioStates({});
     setGroupShares({});
     setGroupCallVisible(false);
     setScreenShareError("");
@@ -3210,7 +4126,24 @@ export default function App() {
         status: data.user.status || "online",
         customStatus: data.user.custom_status || "",
         bio: data.user.bio || "",
+        ringtoneUrl: data.user.ringtone_url || "",
+        songTitle: data.user.song_title || "",
+        songArtist: data.user.song_artist || "",
+        songAlbum: data.user.song_album || "",
+        songCoverUrl: data.user.song_cover_url || "",
+        songAudioUrl: data.user.song_audio_url || "",
+        songSource: data.user.song_source || "",
+        songSourceUrl: data.user.song_source_url || "",
         aliases: data.user.aliases || [],
+      });
+      setMusicDraft({
+        source: data.user.song_source || "spotify",
+        sourceUrl: data.user.song_source_url || "",
+        title: data.user.song_title || "",
+        artist: data.user.song_artist || "",
+        album: data.user.song_album || "",
+        coverUrl: data.user.song_cover_url || "",
+        audioUrl: data.user.song_audio_url || "",
       });
       setCustomStatusInput(data.user.custom_status || "");
       setAboutInput(data.user.bio || "");
@@ -3228,6 +4161,20 @@ export default function App() {
     await apiFetch("/api/logout", { method: "POST" }).catch(() => {});
     setCsrfToken("");
     setUser(null);
+    setProfileSongPlayer({
+      ownerId: null,
+      title: "",
+      artist: "",
+      album: "",
+      coverUrl: "",
+      audioUrl: "",
+      playing: false,
+    });
+    if (profileSongAudioRef.current) {
+      profileSongAudioRef.current.pause();
+      profileSongAudioRef.current.currentTime = 0;
+      profileSongAudioRef.current.removeAttribute("src");
+    }
     setView("chat");
     setFriends([]);
     setGroups([]);
@@ -3329,9 +4276,60 @@ export default function App() {
     setSentPulseChat(chatKey(selectedChat.type, selectedChat.id));
     setTimeout(() => setSentPulseChat(null), 500);
     setMessageInput("");
+    setMentionMenu(null);
+    setMentionIndex(0);
     requestAnimationFrame(() => {
       if (chatBodyRef.current) {
         chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+      }
+    });
+  }
+
+  function updateMentionMenu(value, caretPos = value.length) {
+    const beforeCaret = value.slice(0, caretPos);
+    const match = beforeCaret.match(/(^|\s)@([a-zA-Z0-9_]*)$/);
+    if (!match || !selectedChat) {
+      setMentionMenu(null);
+      setMentionIndex(0);
+      return;
+    }
+    const query = (match[2] || "").toLowerCase();
+    const triggerIndex = beforeCaret.lastIndexOf("@");
+    const users = getMessageContextUsers(selectedChat.type === "group")
+      .filter(Boolean)
+      .filter((person, idx, arr) => arr.findIndex((entry) => Number(entry.id) === Number(person.id)) === idx)
+      .filter((person) => {
+        const username = String(person.username || "").toLowerCase();
+        const display = String(person.display_name || "").toLowerCase();
+        return !query || username.includes(query) || display.includes(query);
+      })
+      .slice(0, 8);
+    if (!users.length) {
+      setMentionMenu(null);
+      setMentionIndex(0);
+      return;
+    }
+    setMentionMenu({
+      query,
+      start: triggerIndex,
+      end: caretPos,
+      users,
+    });
+    setMentionIndex((prev) => Math.min(prev, users.length - 1));
+  }
+
+  function applyMention(userEntry) {
+    if (!mentionMenu || !userEntry) return;
+    const nextValue =
+      `${messageInput.slice(0, mentionMenu.start)}@${userEntry.username} ${messageInput.slice(mentionMenu.end)}`;
+    const nextCaret = mentionMenu.start + userEntry.username.length + 2;
+    setMessageInput(nextValue);
+    setMentionMenu(null);
+    setMentionIndex(0);
+    requestAnimationFrame(() => {
+      if (messageInputRef.current) {
+        messageInputRef.current.focus();
+        messageInputRef.current.setSelectionRange(nextCaret, nextCaret);
       }
     });
   }
@@ -3917,6 +4915,652 @@ export default function App() {
     }
   }
 
+  async function openBlackjackMatch(matchId) {
+    if (!matchId) return;
+    setBlackjackError("");
+    try {
+      const data = await apiFetch(`/api/blackjack/${matchId}`);
+      if (data?.match) {
+        setBlackjackMatch(data.match);
+        setBlackjackPanelOpen(true);
+        if (data.match?.players && user?.id) {
+          const me = data.match.players.find((p) => p.user_id === user.id);
+          setBlackjackWallet(me?.wallet_address || "");
+        }
+      }
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to load match");
+    }
+  }
+
+  async function sendBlackjackInvite(targetId) {
+    if (!targetId) return;
+    setBlackjackError("");
+    setBlackjackUiMessage("");
+    try {
+      const res = await apiFetch("/api/blackjack/invite", {
+        method: "POST",
+        body: JSON.stringify({
+          toId: targetId,
+          wagerAmount: blackjackInvite.wager,
+          token: blackjackInvite.token,
+          chain: blackjackInvite.chain,
+        }),
+      });
+      if (res?.matchId) {
+        await openBlackjackMatch(res.matchId);
+      }
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to invite");
+    }
+  }
+
+  async function acceptBlackjackInvite(matchId, notificationId) {
+    setBlackjackError("");
+    try {
+      const res = await apiFetch(`/api/blackjack/${matchId}/accept`, { method: "POST" });
+      if (notificationId) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+      }
+      if (res?.match) {
+        setBlackjackMatch(res.match);
+        setBlackjackPanelOpen(true);
+        const me = res.match.players?.find((p) => p.user_id === user?.id);
+        setBlackjackWallet(me?.wallet_address || "");
+      } else {
+        openBlackjackMatch(matchId);
+      }
+      loadNotifications();
+    } catch (err) {
+      if (notificationId && /expired/i.test(err.message || "")) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" }).catch(() => {});
+        loadNotifications();
+      }
+      setBlackjackError(err.message || "Unable to accept");
+    }
+  }
+
+  async function declineBlackjackInvite(matchId, notificationId) {
+    setBlackjackError("");
+    try {
+      await apiFetch(`/api/blackjack/${matchId}/decline`, { method: "POST" });
+      if (notificationId) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+      }
+      loadNotifications();
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to decline");
+    }
+  }
+
+  async function simulateBlackjackDeposit() {
+    if (!blackjackMatch?.id) return;
+    setBlackjackActionBusy(true);
+    setBlackjackError("");
+    try {
+      const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/deposit/mock`, { method: "POST" });
+      if (res?.match) setBlackjackMatch(res.match);
+    } catch (err) {
+      setBlackjackError(err.message || "Deposit failed");
+    } finally {
+      setBlackjackActionBusy(false);
+    }
+  }
+
+  function openWalletPicker(mode = "connect") {
+    setWalletPickerMode(mode);
+    setWalletPickerOpen(true);
+  }
+
+  async function chooseBlackjackWallet(walletOption) {
+    if (!walletOption) return;
+    setWalletPickerOpen(false);
+    try {
+      if (miniGameClaimOpen) {
+        const ctx = await connectWalletForChain(
+          miniGameMatch?.chain || miniGameInvite.chain,
+          walletOption,
+          true
+        );
+        setMiniGameClaimAddress((prev) => prev || ctx.address);
+      } else if (miniGameHubOpen && miniGameMatch?.status === "deposit") {
+        await registerMiniGameWallet(walletOption);
+      } else if (walletPickerMode === "claim") {
+        await connectBlackjackWallet(walletOption, true);
+      } else {
+        await registerBlackjackWallet(walletOption);
+      }
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to connect wallet");
+    }
+  }
+
+  async function connectWalletForChain(chain, walletOption = selectedWalletOption, requestAccounts = true) {
+    if (!walletOption) {
+      throw new Error("Choose a wallet first.");
+    }
+    const ctx = await getWalletContext(walletOption, chain, requestAccounts);
+    setBlackjackWallet(ctx.address);
+    setBlackjackWalletProviderId(walletOption.id);
+    return ctx;
+  }
+
+  async function connectBlackjackWallet(walletOption = selectedWalletOption, requestAccounts = true) {
+    setBlackjackError("");
+    const ctx = await connectWalletForChain(
+      blackjackMatch?.chain || blackjackInvite.chain,
+      walletOption,
+      requestAccounts
+    );
+    setBlackjackClaimAddress((prev) => prev || ctx.address);
+    return ctx;
+  }
+
+  async function registerBlackjackWallet(walletOption = selectedWalletOption) {
+    if (!blackjackMatch?.id) return null;
+    setBlackjackActionBusy(true);
+    setBlackjackError("");
+    try {
+      const option = walletOption || selectedWalletOption;
+      if (!option) {
+        throw new Error("Choose a wallet first.");
+      }
+      const ctx = await connectBlackjackWallet(option, true);
+      const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/wallet`, {
+        method: "POST",
+        body: JSON.stringify({ walletAddress: ctx.address }),
+      });
+      if (res?.match) setBlackjackMatch(res.match);
+      setBlackjackWallet(ctx.address);
+      return ctx;
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to register wallet");
+      return null;
+    } finally {
+      setBlackjackActionBusy(false);
+    }
+  }
+
+  async function syncBlackjackMatch() {
+    if (!blackjackMatch?.id) return;
+    try {
+      const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/sync`, { method: "POST" });
+      if (res?.match) setBlackjackMatch(res.match);
+    } catch (err) {
+      setBlackjackError(err.message || "Unable to sync deposits");
+    }
+  }
+
+  async function depositBlackjackOnchain() {
+    if (!blackjackMatch?.id) return;
+    setBlackjackActionBusy(true);
+    setBlackjackError("");
+    try {
+      if (!selectedWalletOption) {
+        throw new Error("Choose a wallet first.");
+      }
+      const ctx = await registerBlackjackWallet(selectedWalletOption);
+      if (!ctx) return;
+      const currentWallet = blackjackWalletRegistered || ctx.address;
+      if (currentWallet.toLowerCase() !== ctx.address.toLowerCase()) {
+        throw new Error("Connect the wallet registered for this match before depositing.");
+      }
+      const token = new ethers.Contract(blackjackMatch.token_address, ERC20_ABI, ctx.signer);
+      const decimals = Number(await token.decimals());
+      const wager = ethers.parseUnits(String(blackjackMatch.wager_amount), decimals);
+      const allowance = await token.allowance(ctx.address, blackjackMatch.escrow_factory_address);
+      if (allowance < wager) {
+        const approveTx = await token.approve(blackjackMatch.escrow_factory_address, wager);
+        await approveTx.wait();
+      }
+      const factory = new ethers.Contract(
+        blackjackMatch.escrow_factory_address,
+        BLACKJACK_FACTORY_ABI,
+        ctx.signer
+      );
+      const depositTx = await factory.deposit(blackjackMatch.escrow_match_id);
+      await depositTx.wait();
+      playBlackjackTone({ type: "square", start: 300, end: 220, duration: 0.08, gain: 0.025 });
+      playBlackjackTone({ type: "square", start: 440, end: 300, duration: 0.1, gain: 0.018, delay: 0.04 });
+      await syncBlackjackMatch();
+    } catch (err) {
+      setBlackjackError(err.shortMessage || err.message || "Deposit failed");
+    } finally {
+      setBlackjackActionBusy(false);
+    }
+  }
+
+  async function blackjackAction(action) {
+    if (!blackjackMatch?.id) return;
+    if (blackjackActionBusy) return;
+    setBlackjackActionBusy(true);
+    setBlackjackError("");
+    try {
+      if (action === "hit") {
+        playBlackjackTone({ type: "triangle", start: 880, end: 620, duration: 0.08, gain: 0.02 });
+      } else if (action === "stand") {
+        playBlackjackTone({ type: "sine", start: 420, end: 360, duration: 0.07, gain: 0.018 });
+      } else if (action === "double") {
+        playBlackjackTone({ type: "square", start: 300, end: 240, duration: 0.08, gain: 0.024 });
+        playBlackjackTone({ type: "square", start: 420, end: 300, duration: 0.09, gain: 0.018, delay: 0.04 });
+      } else if (action === "split") {
+        playBlackjackTone({ type: "triangle", start: 760, end: 520, duration: 0.07, gain: 0.018 });
+        playBlackjackTone({ type: "triangle", start: 760, end: 520, duration: 0.07, gain: 0.018, delay: 0.05 });
+      }
+      const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action }),
+      });
+      if (res?.match) setBlackjackMatch(res.match);
+    } catch (err) {
+      setBlackjackError(err.message || "Action failed");
+    } finally {
+      setBlackjackActionBusy(false);
+    }
+  }
+
+  async function claimBlackjackWinnings() {
+    if (!blackjackMatch?.id) return;
+    if (!blackjackClaimAddress.trim()) return;
+    setBlackjackActionBusy(true);
+    setBlackjackError("");
+    try {
+      if (CHAIN_MODE === "evm") {
+        if (!selectedWalletOption) {
+          throw new Error("Choose a wallet first.");
+        }
+        const ctx = await connectBlackjackWallet(selectedWalletOption, true);
+        const factory = new ethers.Contract(
+          blackjackMatch.escrow_factory_address,
+          BLACKJACK_FACTORY_ABI,
+          ctx.signer
+        );
+        const recipient = ethers.getAddress(blackjackClaimAddress.trim());
+        const tx = await factory.claim(blackjackMatch.escrow_match_id, recipient);
+        await tx.wait();
+        const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/claim`, {
+          method: "POST",
+          body: JSON.stringify({ walletAddress: recipient, txHash: tx.hash }),
+        });
+        if (res?.match) setBlackjackMatch(res.match);
+      } else {
+      const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/claim`, {
+        method: "POST",
+        body: JSON.stringify({ walletAddress: blackjackClaimAddress.trim() }),
+      });
+      if (res?.match) setBlackjackMatch(res.match);
+      }
+      setBlackjackClaimOpen(false);
+      setBlackjackClaimAddress("");
+    } catch (err) {
+      setBlackjackError(err.message || "Claim failed");
+    } finally {
+      setBlackjackActionBusy(false);
+    }
+  }
+
+  async function openMiniGameMatch(matchId) {
+    if (!matchId) return;
+    setMiniGameError("");
+    try {
+      const data = await apiFetch(`/api/minigames/${matchId}`);
+      if (data?.match) {
+        setMiniGameMatch(data.match);
+        setMiniGameHubOpen(true);
+        setMiniGameDepositAmount(String(data.match.wager_amount || 10));
+        const mine = (data.match.players || []).find((p) => p.user_id === user?.id);
+        if (mine?.wallet_address) {
+          setMiniGameClaimAddress((prev) => prev || mine.wallet_address);
+        }
+      }
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to load game");
+    }
+  }
+
+  async function sendMiniGameInvite(targetId) {
+    if (!targetId) return;
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    setMiniGameUiMessage("");
+    try {
+      const res = await apiFetch("/api/minigames/invite", {
+        method: "POST",
+        body: JSON.stringify({
+          toId: targetId,
+          gameType: miniGameInvite.gameType,
+          wagerAmount: miniGameInvite.wager,
+          token: miniGameInvite.token,
+          chain: miniGameInvite.chain,
+        }),
+      });
+      if (res?.matchId) {
+        await openMiniGameMatch(res.matchId);
+      }
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to send game invite");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function acceptMiniGameInvite(matchId, notificationId) {
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      const res = await apiFetch(`/api/minigames/${matchId}/accept`, { method: "POST" });
+      if (notificationId) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+      }
+      if (res?.match) {
+        setMiniGameMatch(res.match);
+        setMiniGameHubOpen(true);
+        setMiniGameDepositAmount(String(res.match.wager_amount || 10));
+        const mine = (res.match.players || []).find((p) => p.user_id === user?.id);
+        if (mine?.wallet_address) {
+          setMiniGameClaimAddress((prev) => prev || mine.wallet_address);
+        }
+      }
+      loadNotifications();
+    } catch (err) {
+      if (notificationId && /expired/i.test(err.message || "")) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" }).catch(() => {});
+        loadNotifications();
+      }
+      setMiniGameError(err.message || "Unable to accept game");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function declineMiniGameInvite(matchId, notificationId) {
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      await apiFetch(`/api/minigames/${matchId}/decline`, { method: "POST" });
+      if (notificationId) {
+        await apiFetch(`/api/notifications/${notificationId}/read`, { method: "POST" });
+      }
+      loadNotifications();
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to decline game");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function depositMiniGame() {
+    if (!miniGameMatch?.id) return;
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      if (CHAIN_MODE === "evm") {
+        throw new Error("Use the on-chain deposit flow.");
+      }
+      const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/deposit`, {
+        method: "POST",
+        body: JSON.stringify({
+          amount: miniGameMatch.game_type === "coinflip" ? miniGameMatch.wager_amount : miniGameDepositAmount,
+        }),
+      });
+      if (res?.match) setMiniGameMatch(res.match);
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to lock your wager");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function registerMiniGameWallet(walletOption = selectedWalletOption) {
+    if (!miniGameMatch?.id) return null;
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      const option = walletOption || selectedWalletOption;
+      if (!option) {
+        throw new Error("Choose a wallet first.");
+      }
+      const ctx = await connectWalletForChain(miniGameMatch?.chain || miniGameInvite.chain, option, true);
+      const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/wallet`, {
+        method: "POST",
+        body: JSON.stringify({ walletAddress: ctx.address }),
+      });
+      if (res?.match) setMiniGameMatch(res.match);
+      setMiniGameClaimAddress((prev) => prev || ctx.address);
+      return ctx;
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to register wallet");
+      return null;
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function syncMiniGameMatch() {
+    if (!miniGameMatch?.id) return;
+    try {
+      const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/sync`, { method: "POST" });
+      if (res?.match) setMiniGameMatch(res.match);
+    } catch (err) {
+      setMiniGameError(err.message || "Unable to sync game");
+    }
+  }
+
+  async function depositMiniGameOnchain() {
+    if (!miniGameMatch?.id) return;
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      if (!selectedWalletOption) {
+        throw new Error("Choose a wallet first.");
+      }
+      const ctx = await registerMiniGameWallet(selectedWalletOption);
+      if (!ctx) return;
+      const registeredWallet = String(miniGameMe?.wallet_address || ctx.address).toLowerCase();
+      if (registeredWallet !== String(ctx.address).toLowerCase()) {
+        throw new Error("Connect the wallet registered for this game before depositing.");
+      }
+      const token = new ethers.Contract(miniGameMatch.token_address, ERC20_ABI, ctx.signer);
+      const decimals = Number(await token.decimals());
+      const amountValue =
+        miniGameMatch.game_type === "coinflip"
+          ? String(miniGameMatch.wager_amount)
+          : String(miniGameDepositAmount || 0);
+      const depositAmount = ethers.parseUnits(amountValue, decimals);
+      const allowance = await token.allowance(ctx.address, miniGameMatch.escrow_factory_address);
+      if (allowance < depositAmount) {
+        const approveTx = await token.approve(miniGameMatch.escrow_factory_address, depositAmount);
+        await approveTx.wait();
+      }
+      const factory = new ethers.Contract(
+        miniGameMatch.escrow_factory_address,
+        MINI_GAME_FACTORY_ABI,
+        ctx.signer
+      );
+      const depositTx = await factory.deposit(miniGameMatch.escrow_match_id, depositAmount);
+      await depositTx.wait();
+      await syncMiniGameMatch();
+    } catch (err) {
+      setMiniGameError(err.shortMessage || err.message || "Deposit failed");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function claimMiniGameWinnings() {
+    if (!miniGameMatch?.id) return;
+    if (!miniGameClaimAddress.trim()) return;
+    setMiniGameBusy(true);
+    setMiniGameError("");
+    try {
+      if (CHAIN_MODE === "evm") {
+        if (!selectedWalletOption) {
+          throw new Error("Choose a wallet first.");
+        }
+        const ctx = await connectWalletForChain(
+          miniGameMatch?.chain || miniGameInvite.chain,
+          selectedWalletOption,
+          true
+        );
+        const recipient = ethers.getAddress(miniGameClaimAddress.trim());
+        const factory = new ethers.Contract(
+          miniGameMatch.escrow_factory_address,
+          MINI_GAME_FACTORY_ABI,
+          ctx.signer
+        );
+        const tx = await factory.claim(miniGameMatch.escrow_match_id, recipient);
+        await tx.wait();
+        const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/claim`, {
+          method: "POST",
+          body: JSON.stringify({ walletAddress: recipient, txHash: tx.hash }),
+        });
+        if (res?.match) setMiniGameMatch(res.match);
+      } else {
+        const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/claim`, {
+          method: "POST",
+          body: JSON.stringify({ walletAddress: miniGameClaimAddress.trim() }),
+        });
+        if (res?.match) setMiniGameMatch(res.match);
+      }
+      setMiniGameClaimOpen(false);
+    } catch (err) {
+      setMiniGameError(err.message || "Claim failed");
+    } finally {
+      setMiniGameBusy(false);
+    }
+  }
+
+  async function copyEscrowAddress(address, setMessage) {
+    try {
+      await copyText(address);
+      setMessage("Escrow address copied.");
+      setTimeout(() => setMessage(""), 1800);
+    } catch {
+      setMessage("Unable to copy address.");
+      setTimeout(() => setMessage(""), 1800);
+    }
+  }
+
+  function prepareBlackjackRematch() {
+    if (!blackjackMatch) return;
+    const opponent = blackjackPlayers.find((p) => p.user_id !== user?.id);
+    setBlackjackInvite({
+      wager: String(blackjackMatch.wager_amount || 10),
+      token: blackjackMatch.token || "USDC",
+      chain: blackjackMatch.chain || "base",
+      targetId: opponent?.user_id ? String(opponent.user_id) : "",
+    });
+    setBlackjackMatch(null);
+    setBlackjackClaimOpen(false);
+    setBlackjackClaimAddress("");
+    setBlackjackError("");
+    setBlackjackUiMessage("");
+    setBlackjackPanelOpen(true);
+  }
+
+  function prepareMiniGameRematch() {
+    if (!miniGameMatch) return;
+    const opponent = miniGamePlayers.find((p) => p.user_id !== user?.id);
+    setMiniGameInvite({
+      gameType: miniGameMatch.game_type || "coinflip",
+      wager: String(miniGameMatch.wager_amount || 10),
+      token: miniGameMatch.token || "USDC",
+      chain: miniGameMatch.chain || "base",
+      targetId: opponent?.user_id ? String(opponent.user_id) : "",
+    });
+    setMiniGameMatch(null);
+    setMiniGameClaimOpen(false);
+    setMiniGameClaimAddress("");
+    setMiniGameError("");
+    setMiniGameUiMessage("");
+    setMiniGameHubOpen(true);
+  }
+
+  async function saveProfileSong() {
+    if (musicSaving) return;
+    setMusicSaving(true);
+    setMusicError("");
+    const payload = {
+      source: musicDraft.sourceUrl ? "spotify" : "custom",
+      sourceUrl: musicDraft.sourceUrl,
+      title: musicDraft.title,
+      artist: musicDraft.artist,
+      album: musicDraft.album,
+      coverUrl: musicDraft.coverUrl,
+      audioUrl: musicDraft.audioUrl,
+    };
+    try {
+      const res = await apiFetch("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ song: payload }),
+      });
+      if (res?.user) {
+        setUser(res.user);
+        setSettings((prev) => ({
+          ...prev,
+          songTitle: res.user.song_title || "",
+          songArtist: res.user.song_artist || "",
+          songAlbum: res.user.song_album || "",
+          songCoverUrl: res.user.song_cover_url || "",
+          songAudioUrl: res.user.song_audio_url || "",
+          songSource: res.user.song_source || "",
+          songSourceUrl: res.user.song_source_url || "",
+        }));
+        setMusicDraft({
+          source: res.user.song_source || "spotify",
+          sourceUrl: res.user.song_source_url || "",
+          title: res.user.song_title || "",
+          artist: res.user.song_artist || "",
+          album: res.user.song_album || "",
+          coverUrl: res.user.song_cover_url || "",
+          audioUrl: res.user.song_audio_url || "",
+        });
+      }
+    } catch (err) {
+      setMusicError(err.message || "Unable to save song");
+    } finally {
+      setTimeout(() => setMusicSaving(false), 300);
+    }
+  }
+
+  async function clearProfileSong() {
+    if (musicSaving) return;
+    setMusicSaving(true);
+    setMusicError("");
+    try {
+      const res = await apiFetch("/api/settings", {
+        method: "PATCH",
+        body: JSON.stringify({ song: null }),
+      });
+      if (res?.user) {
+        setUser(res.user);
+        setSettings((prev) => ({
+          ...prev,
+          songTitle: "",
+          songArtist: "",
+          songAlbum: "",
+          songCoverUrl: "",
+          songAudioUrl: "",
+          songSource: "",
+          songSourceUrl: "",
+        }));
+        setMusicDraft({
+          source: "spotify",
+          sourceUrl: "",
+          title: "",
+          artist: "",
+          album: "",
+          coverUrl: "",
+          audioUrl: "",
+        });
+      }
+    } catch (err) {
+      setMusicError(err.message || "Unable to clear song");
+    } finally {
+      setTimeout(() => setMusicSaving(false), 300);
+    }
+  }
+
   async function applyAvatarDataUrl(dataUrl) {
     await new Promise((r) => setTimeout(r, 180));
     const blob = dataUrlToBlob(dataUrl);
@@ -4452,7 +6096,31 @@ export default function App() {
 
   function openProfileMenu(event, userId) {
     event.preventDefault();
+    setFriendMuteMenu(null);
+    setFriendGameMenu(null);
     setShowProfileMenu({ x: event.clientX, y: event.clientY, userId });
+  }
+
+  function openGameInviteFromProfile(userId, gameType) {
+    const normalizedId = Number(userId);
+    if (!normalizedId) return;
+    setShowProfileMenu(null);
+    setFriendGameMenu(null);
+    if (gameType === "blackjack") {
+      setBlackjackInvite((prev) => ({ ...prev, targetId: String(normalizedId) }));
+      setBlackjackMatch(null);
+      setBlackjackError("");
+      setBlackjackPanelOpen(true);
+      return;
+    }
+    setMiniGameMatch(null);
+    setMiniGameError("");
+    setMiniGameInvite((prev) => ({
+      ...prev,
+      gameType,
+      targetId: String(normalizedId),
+    }));
+    setMiniGameHubOpen(true);
   }
 
   function openGroupMemberMenu(event, memberId) {
@@ -4637,6 +6305,7 @@ export default function App() {
 
   function renderNotificationText(n) {
     const text = n?.message || "Notification";
+    const payload = parseNotificationPayload(n);
     if (n?.type === "group_invite" && n.group_id) {
       return (
         <>
@@ -4661,6 +6330,37 @@ export default function App() {
     }
     if (n?.type === "mention" && n?.context === "dm") {
       return `@${n.from_username} has mentioned you in private`;
+    }
+    if (n?.type === "blackjack_invite") {
+      if (isGameInviteExpired(n, notificationClock)) {
+        return "Blackjack invitation expired.";
+      }
+      const wager = payload?.wagerAmount ? `${payload.wagerAmount} ${payload.token || "USDC"}` : "a wager";
+      const chainLabel = payload?.chain ? ` on ${payload.chain}` : "";
+      return (
+        <>
+          @{n.from_username || "friend"} invited you to Blackjack — {wager}{chainLabel}
+        </>
+      );
+    }
+    if (n?.type === "blackjack_claim") {
+      return "You won a Blackjack match. Claim your winnings.";
+    }
+    if (n?.type === "minigame_invite") {
+      if (isGameInviteExpired(n, notificationClock)) {
+        const gameLabel = payload?.gameType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
+        return `${gameLabel} invitation expired.`;
+      }
+      const gameLabel = payload?.gameType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
+      const wager = payload?.wagerAmount ? `${payload.wagerAmount} ${payload.token || "USDC"}` : "a wager";
+      return (
+        <>
+          @{n.from_username || "friend"} invited you to {gameLabel} for {wager}
+        </>
+      );
+    }
+    if (n?.type === "minigame_claim") {
+      return "You won a mini game. Claim your winnings.";
     }
     const from = (n?.from_username || "").toLowerCase();
     if (!from) return text;
@@ -4818,6 +6518,126 @@ export default function App() {
   const profileStory = profileUser ? stories.find((s) => s.user?.id === profileUser.id) : null;
   const profileHasStory = Boolean(profileStory?.stories?.length);
   const profileHasUnviewed = Boolean(profileStory?.has_unviewed);
+  const profileSong = profileUser ? extractProfileSong(profileUser) : null;
+  const profileSongHasAudio = !!profileSong?.audioUrl;
+  const profileSongIsPlaying =
+    !!profileSong &&
+    profileSongPlayer.ownerId === profileUser?.id &&
+    profileSongPlayer.playing;
+  const blackjackState = blackjackMatch?.state || null;
+  const blackjackPlayers = blackjackMatch?.players || [];
+  const blackjackMe = blackjackPlayers.find((p) => p.user_id === user?.id) || null;
+  const blackjackOpponent = blackjackPlayers.find((p) => p.user_id !== user?.id) || null;
+  const blackjackIsMyTurn = blackjackState?.currentPlayerId === user?.id;
+  const blackjackPot = blackjackMatch
+    ? Number(blackjackMatch.wager_amount || 0) * blackjackPlayers.length
+    : 0;
+  const blackjackDepositRemaining = blackjackMatch?.deposit_deadline
+    ? Math.max(0, new Date(blackjackMatch.deposit_deadline).getTime() - Date.now())
+    : 0;
+  const blackjackCallOpponent = resolveUserById(callState.withUserId, {
+    user,
+    friends,
+    friendsAll,
+    manualDmUsers,
+    allUsers,
+  });
+  const blackjackTargetId = Number(blackjackInvite.targetId || blackjackCallOpponent?.id || selectedFriend?.id || friends?.[0]?.id || 0);
+  const blackjackTargetUser = resolveUserById(blackjackTargetId, {
+    user,
+    friends,
+    friendsAll,
+    manualDmUsers,
+    allUsers,
+  });
+  const blackjackWalletRegistered = blackjackMe?.wallet_address || "";
+  const blackjackEscrowReady =
+    !!blackjackMatch?.escrow_match_id &&
+    !!blackjackMatch?.escrow_factory_address &&
+    !!blackjackMatch?.token_address;
+  const miniGamePlayers = miniGameMatch?.players || [];
+  const miniGameMe = miniGamePlayers.find((p) => p.user_id === user?.id) || null;
+  const miniGameOpponent = miniGamePlayers.find((p) => p.user_id !== user?.id) || null;
+  const miniGamePot = miniGamePlayers.reduce(
+    (sum, p) => sum + Number(p.deposited_amount || p.deposit_amount || 0),
+    0
+  );
+  const miniGameCountdownRemaining = miniGameMatch?.state?.countdownEndsAt
+    ? Math.max(0, new Date(miniGameMatch.state.countdownEndsAt).getTime() - Date.now())
+    : 0;
+  const miniGameTargetId = Number(miniGameInvite.targetId || selectedFriend?.id || friends?.[0]?.id || 0);
+  const miniGameWinner = miniGameMatch?.winner_id
+    ? resolveUserById(miniGameMatch.winner_id, { user, friends, friendsAll, manualDmUsers, allUsers })
+    : null;
+  const miniGameAssignments = miniGameMatch?.state?.assignments || {};
+  const miniGameWalletRegistered = miniGameMe?.wallet_address || "";
+  const miniGameEscrowReady =
+    !!miniGameMatch?.escrow_match_id &&
+    !!miniGameMatch?.escrow_factory_address &&
+    !!miniGameMatch?.token_address;
+  const miniGameGameLabel =
+    miniGameMatch?.game_type === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
+  const walletOptions = useMemo(() => {
+    const injected = listInjectedWallets();
+    const options = [...injected];
+    if (WALLETCONNECT_PROJECT_ID) {
+      options.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect" });
+    }
+    return options;
+  }, []);
+  const selectedWalletOption = walletOptions.find((option) => option.id === blackjackWalletProviderId) || null;
+  const renderGameAudioStrip = (mode = "casino") => (
+    <div className="xp-game-audio-strip">
+      <div className="xp-game-audio-meta">
+        <div className="xp-game-audio-title">Game Audio</div>
+        <div className="xp-game-audio-sub">
+          {mode === "coinflip" ? "Bet loop + coinflip sting" : "Bet loop ambience"}
+        </div>
+      </div>
+      <button
+        className={`xp-button xp-game-audio-toggle ${gameAudioMuted ? "muted" : ""}`}
+        type="button"
+        onClick={() => setGameAudioMuted((prev) => !prev)}
+      >
+        {gameAudioMuted ? "Unmute" : "Mute"}
+      </button>
+    </div>
+  );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    const stored = localStorage.getItem(`xp-wallet-provider:${user.id}`) || "";
+    if (stored && walletOptions.some((option) => option.id === stored)) {
+      setBlackjackWalletProviderId((prev) => prev || stored);
+    }
+  }, [user?.id, walletOptions]);
+
+  useEffect(() => {
+    if (!user?.id || !blackjackWalletProviderId) return;
+    localStorage.setItem(`xp-wallet-provider:${user.id}`, blackjackWalletProviderId);
+  }, [user?.id, blackjackWalletProviderId]);
+  const renderBjCard = (card, idx, hidden = false) => {
+    const rank = card?.slice(0, -1) || "";
+    const suit = card?.slice(-1) || "";
+    const suitMap = { H: "♥", D: "♦", C: "♣", S: "♠" };
+    const isRed = suit === "H" || suit === "D";
+    return (
+      <div
+        key={`${card}-${idx}`}
+        className={`xp-bj-card ${hidden ? "back" : ""} ${isRed ? "red" : ""}`}
+        style={{ animationDelay: `${idx * 80}ms` }}
+      >
+        {hidden ? (
+          <div className="xp-bj-card-back" />
+        ) : (
+          <>
+            <div className="xp-bj-card-rank">{rank}</div>
+            <div className="xp-bj-card-suit">{suitMap[suit] || suit}</div>
+          </>
+        )}
+      </div>
+    );
+  };
 
   if (!user) {
     return (
@@ -5014,6 +6834,7 @@ export default function App() {
 
             <div className="xp-sidebar-actions">
               <button className="xp-button" type="button" onClick={() => setView("chat")}>Inbox</button>
+              <button className="xp-button" type="button" onClick={() => setMiniGameHubOpen(true)}>Games</button>
               <button className="xp-button" type="button" onClick={() => setView("settings")}>Settings</button>
             </div>
 
@@ -5124,6 +6945,12 @@ export default function App() {
                   {notifications.length === 0 && <div className="xp-muted">No alerts</div>}
                   {notifications.map((n) => (
                     <div key={n.id} className="xp-notification">
+                      {(() => {
+                        const inviteExpired =
+                          (n.type === "blackjack_invite" || n.type === "minigame_invite") &&
+                          isGameInviteExpired(n, notificationClock);
+                        return (
+                          <>
                       <div className="xp-notification-text">{renderNotificationText(n)}</div>
                       <div className="xp-notification-actions">
                         {n.context === "group" && n.group_id && n.type !== "group_invite" && (
@@ -5148,8 +6975,73 @@ export default function App() {
                             <button className="xp-button" onClick={() => denyTransfer(n.transfer_id)}>Decline</button>
                           </div>
                         )}
+                        {n.type === "blackjack_invite" && n.ref_id && !inviteExpired && (
+                          <div className="xp-transfer-actions">
+                            <button
+                              className="xp-button"
+                              onClick={() => acceptBlackjackInvite(n.ref_id, n.id)}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              className="xp-button"
+                              onClick={() => declineBlackjackInvite(n.ref_id, n.id)}
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
+                        {n.type === "blackjack_invite" && inviteExpired && (
+                          <div className="xp-muted">Invitation expired</div>
+                        )}
+                        {n.type === "blackjack_claim" && n.ref_id && (
+                          <button
+                            className="xp-button"
+                            onClick={() => {
+                              openBlackjackMatch(n.ref_id);
+                              setBlackjackClaimOpen(true);
+                              apiFetch(`/api/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
+                            }}
+                          >
+                            Claim
+                          </button>
+                        )}
+                        {n.type === "minigame_invite" && n.ref_id && !inviteExpired && (
+                          <div className="xp-transfer-actions">
+                            <button
+                              className="xp-button"
+                              onClick={() => acceptMiniGameInvite(n.ref_id, n.id)}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              className="xp-button"
+                              onClick={() => declineMiniGameInvite(n.ref_id, n.id)}
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
+                        {n.type === "minigame_invite" && inviteExpired && (
+                          <div className="xp-muted">Invitation expired</div>
+                        )}
+                        {n.type === "minigame_claim" && n.ref_id && (
+                          <button
+                            className="xp-button"
+                            onClick={() => {
+                              openMiniGameMatch(n.ref_id);
+                              setMiniGameClaimOpen(true);
+                              apiFetch(`/api/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
+                            }}
+                          >
+                            Claim
+                          </button>
+                        )}
                       </div>
                       <div className="xp-notification-time">{formatDateTime(n.created_at)}</div>
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -5411,6 +7303,89 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  <div className="xp-settings-card">
+                    <div className="xp-settings-title">Profile Music</div>
+                    <div className="xp-settings-sub">
+                      Paste a Spotify track URL to auto-fill the title and artwork. Add a direct MP3 preview URL so others can press play.
+                    </div>
+                    <label className="xp-settings-field">
+                      Spotify track URL
+                      <input
+                        value={musicDraft.sourceUrl}
+                        placeholder="https://open.spotify.com/track/..."
+                        onChange={(e) =>
+                          setMusicDraft((prev) => ({ ...prev, sourceUrl: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <div className="xp-settings-field-grid">
+                      <label className="xp-settings-field">
+                        Song title
+                        <input
+                          value={musicDraft.title}
+                          onChange={(e) =>
+                            setMusicDraft((prev) => ({ ...prev, title: e.target.value }))
+                          }
+                        />
+                      </label>
+                      <label className="xp-settings-field">
+                        Artist
+                        <input
+                          value={musicDraft.artist}
+                          onChange={(e) =>
+                            setMusicDraft((prev) => ({ ...prev, artist: e.target.value }))
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="xp-settings-field">
+                      Album
+                      <input
+                        value={musicDraft.album}
+                        onChange={(e) =>
+                          setMusicDraft((prev) => ({ ...prev, album: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="xp-settings-field">
+                      Album cover URL
+                      <input
+                        value={musicDraft.coverUrl}
+                        placeholder="https://..."
+                        onChange={(e) =>
+                          setMusicDraft((prev) => ({ ...prev, coverUrl: e.target.value }))
+                        }
+                      />
+                    </label>
+                    <label className="xp-settings-field">
+                      Audio preview URL
+                      <input
+                        value={musicDraft.audioUrl}
+                        placeholder="https://.../preview.mp3"
+                        onChange={(e) =>
+                          setMusicDraft((prev) => ({ ...prev, audioUrl: e.target.value }))
+                        }
+                      />
+                    </label>
+                    {musicError && <div className="xp-error">{musicError}</div>}
+                    <div className="xp-button-row">
+                      <button
+                        className={`xp-button ${musicSaving ? "is-saving" : ""}`}
+                        onClick={saveProfileSong}
+                        disabled={musicSaving}
+                      >
+                        {musicSaving ? "Saving..." : "Save"}
+                      </button>
+                      <button
+                        className="xp-button"
+                        onClick={clearProfileSong}
+                        disabled={musicSaving}
+                      >
+                        Clear
+                      </button>
+                    </div>
                   </div>
 
                   <div className="xp-settings-card">
@@ -6018,14 +7993,40 @@ export default function App() {
                           </div>
                         </div>
                       )}
+                      <div className="xp-chat-composer">
                       <input
+                        ref={messageInputRef}
                         value={messageInput}
                         onChange={(e) => {
                           setMessageInput(e.target.value);
+                          updateMentionMenu(e.target.value, e.target.selectionStart ?? e.target.value.length);
                           handleTyping();
                         }}
                         onPaste={handlePasteImage}
                         onKeyDown={(e) => {
+                          if (mentionMenu?.users?.length) {
+                            if (e.key === "ArrowDown") {
+                              e.preventDefault();
+                              setMentionIndex((prev) => (prev + 1) % mentionMenu.users.length);
+                              return;
+                            }
+                            if (e.key === "ArrowUp") {
+                              e.preventDefault();
+                              setMentionIndex((prev) => (prev - 1 + mentionMenu.users.length) % mentionMenu.users.length);
+                              return;
+                            }
+                            if (e.key === "Enter" || e.key === "Tab") {
+                              e.preventDefault();
+                              applyMention(mentionMenu.users[mentionIndex] || mentionMenu.users[0]);
+                              return;
+                            }
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              setMentionMenu(null);
+                              setMentionIndex(0);
+                              return;
+                            }
+                          }
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
                             if (imagePreview && !messageInput.trim()) {
@@ -6035,8 +8036,36 @@ export default function App() {
                             sendMessage();
                           }
                         }}
+                        onClick={(e) => updateMentionMenu(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+                        onKeyUp={(e) => updateMentionMenu(e.currentTarget.value, e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
                         placeholder="Type a message..."
                       />
+                      {mentionMenu?.users?.length ? (
+                        <div className="xp-mention-menu">
+                          {mentionMenu.users.map((person, idx) => (
+                            <button
+                              key={person.id}
+                              type="button"
+                              className={`xp-mention-option ${idx === mentionIndex ? "active" : ""}`}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => applyMention(person)}
+                            >
+                              <img
+                                src={avatarUrl(person.avatar, person.username)}
+                                alt=""
+                                onError={(e) => onAvatarError(e, person.username)}
+                              />
+                              <div className="xp-mention-option-text">
+                                <div className="xp-mention-option-name">@{person.username}</div>
+                                <div className="xp-mention-option-sub">
+                                  {person.display_name || (selectedChat?.type === "group" ? "Group member" : "Direct message")}
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      </div>
                       <div className="xp-emoji-wrap">
                         <button
                           className="xp-button"
@@ -6369,7 +8398,10 @@ export default function App() {
           className="xp-context-menu"
           style={{ left: showProfileMenu.x, top: showProfileMenu.y }}
           onClick={(e) => e.stopPropagation()}
-          onMouseLeave={() => setFriendMuteMenu(null)}
+          onMouseLeave={() => {
+            setFriendMuteMenu(null);
+            setFriendGameMenu(null);
+          }}
         >
           {(() => {
             const uid = Number(showProfileMenu.userId);
@@ -6443,6 +8475,17 @@ export default function App() {
             }}
           >
             Set nickname
+          </button>
+          <button
+            className="xp-context-item"
+            onClick={() => {
+              closeDM(showProfileMenu.userId);
+              setFriendMuteMenu(null);
+              setFriendGameMenu(null);
+              setShowProfileMenu(null);
+            }}
+          >
+            Close DM
           </button>
           {nicknameMap[showProfileMenu.userId] && (
             <button
@@ -6545,6 +8588,52 @@ export default function App() {
                       }}
                     >
                       Until I turn it back on
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          {(() => {
+            const uid = Number(showProfileMenu.userId);
+            const removed = removedFriendIds.includes(uid);
+            const isPending = pendingFriendIds.includes(uid);
+            const isFriend =
+              !removed &&
+              !isPending &&
+              friendsAll.some((f) => Number(f.id) === uid);
+            if (!isFriend) return null;
+            return (
+              <div style={{ position: "relative" }}>
+                <button
+                  className="xp-context-item"
+                  onClick={() => {
+                    setFriendGameMenu((prev) =>
+                      prev?.userId === showProfileMenu.userId ? null : { userId: showProfileMenu.userId }
+                    );
+                  }}
+                >
+                  Invite to Game
+                </button>
+                {friendGameMenu?.userId === showProfileMenu.userId && (
+                  <div className="xp-context-submenu">
+                    <button
+                      className="xp-context-item"
+                      onClick={() => openGameInviteFromProfile(showProfileMenu.userId, "blackjack")}
+                    >
+                      Blackjack
+                    </button>
+                    <button
+                      className="xp-context-item"
+                      onClick={() => openGameInviteFromProfile(showProfileMenu.userId, "coinflip")}
+                    >
+                      Coinflip
+                    </button>
+                    <button
+                      className="xp-context-item"
+                      onClick={() => openGameInviteFromProfile(showProfileMenu.userId, "bigbank")}
+                    >
+                      Big Bank Small Bank
                     </button>
                   </div>
                 )}
@@ -6697,6 +8786,43 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  {profileSong && (profileSong.title || profileSong.artist || profileSong.coverUrl || profileSong.audioUrl) && (
+                    <div className="xp-profile-music-card">
+                      <div className={`xp-profile-music-cover ${profileSong.coverUrl ? "" : "placeholder"}`}>
+                        {profileSong.coverUrl ? (
+                          <img
+                            src={resolveMediaUrl(profileSong.coverUrl)}
+                            alt=""
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        ) : (
+                          <span>???</span>
+                        )}
+                      </div>
+                      <div className="xp-profile-music-info">
+                        <div className="xp-profile-music-title">
+                          {profileSong.title || "Untitled track"}
+                        </div>
+                        <div className="xp-profile-music-artist">
+                          {profileSong.artist || "Unknown artist"}
+                        </div>
+                        {profileSong.album && (
+                          <div className="xp-profile-music-album">{profileSong.album}</div>
+                        )}
+                      </div>
+                      <div className="xp-profile-music-actions">
+                        <button
+                          className={`xp-profile-music-button ${profileSongHasAudio ? "" : "disabled"}`}
+                          onClick={() => toggleProfileSong(profileUser)}
+                          disabled={!profileSongHasAudio}
+                        >
+                          {profileSongIsPlaying ? "Pause" : "Play"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="xp-profile-divider" />
                   <div className="xp-private-note">
                     <div className="xp-private-title">Private note</div>
@@ -6739,12 +8865,7 @@ export default function App() {
                               onClick={() => setRemoveFriendConfirm(profileUser)}
                               type="button"
                             >
-                              <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
-                                <circle cx="9" cy="8" r="4" fill="currentColor" />
-                                <path d="M2.5 20c0-4 3.2-7.2 7.2-7.2h1.8" fill="none" stroke="currentColor" strokeWidth="2" />
-                                <rect x="14.5" y="6.5" width="7" height="7" rx="1.5" fill="none" stroke="currentColor" strokeWidth="2" />
-                                <path d="M16.5 10h3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                              </svg>
+                              <img src={removeIcon} alt="Remove friend" />
                             </button>
                           ) : (
                             <button
@@ -6758,12 +8879,7 @@ export default function App() {
                               type="button"
                             >
                               {pendingFriendIds.includes(Number(profileUser.id)) ? (
-                                <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
-                                  <circle cx="8.5" cy="8" r="4" fill="currentColor" />
-                                  <path d="M2.5 20c0-4 3.2-7.2 7.2-7.2h1.8" fill="none" stroke="currentColor" strokeWidth="2" />
-                                  <circle cx="17.5" cy="12.5" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
-                                  <path d="M17.5 10.4v2.6l1.7 1.1" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                                </svg>
+                                <img src={pendingIcon} alt="Pending request" />
                               ) : (
                                 <img src={addIcon} alt="Add friend" />
                               )}
@@ -8188,7 +10304,7 @@ export default function App() {
           <div className="xp-modal xp-call-modal" onClick={(e) => e.stopPropagation()} style={{ transform: `translate(${callWindowPos.x}px, ${callWindowPos.y}px)` }}>
             <div className="xp-modal-title xp-call-drag" onMouseDown={startCallDrag}>
               <span>Calling...</span>
-              <button className="xp-modal-close" onClick={endCall}>x</button>
+              <button className="xp-modal-close" onClick={cancelOutgoingCall}>x</button>
             </div>
             <div className="xp-modal-body">
               {(() => {
@@ -8215,7 +10331,7 @@ export default function App() {
               })()}
               <div className="xp-call-duration">Ringing...</div>
               <div className="xp-call-actions">
-                <button className="xp-button" onClick={endCall}>Cancel</button>
+                <button className="xp-button" onClick={cancelOutgoingCall}>Cancel</button>
               </div>
             </div>
           </div>
@@ -8235,6 +10351,8 @@ export default function App() {
                 friends.find((f) => f.id === callState.withUserId) ||
                 manualDmUsers.find((f) => f.id === callState.withUserId) ||
                 null;
+              const otherAudioStatus = callAudioStates[callState.withUserId] || null;
+              const otherStatusType = otherAudioStatus?.deafened ? "deafened" : otherAudioStatus?.muted ? "muted" : null;
               const solo = callState.status === "active" && !remotePresent;
               return (
                 <div className="xp-call-user">
@@ -8244,6 +10362,11 @@ export default function App() {
                       alt=""
                       onError={(e) => onAvatarError(e, other?.username || "U")}
                     />
+                    {otherStatusType && (
+                      <div className={`xp-call-avatar-status ${otherStatusType}`} title={otherStatusType === "deafened" ? "Deafened" : "Muted"}>
+                        {getAudioStatusIcon(otherStatusType)}
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div className="xp-call-name">@{other?.username || "user"}</div>
@@ -8277,6 +10400,13 @@ export default function App() {
                   </svg>
                 </button>
                 <button
+                  className={`xp-button xp-icon-btn ${callState.deafened ? "muted" : ""}`}
+                  onClick={toggleDeafen}
+                  title={callState.deafened ? "Undeafen" : "Deafen"}
+                >
+                  {getAudioStatusIcon("deafened")}
+                </button>
+                <button
                   className="xp-button xp-icon-btn"
                   type="button"
                   title="Call settings"
@@ -8289,6 +10419,9 @@ export default function App() {
               </div>
               <button className="xp-button" onClick={dmShareActive ? stopDmScreenShare : startDmScreenShare}>
                 {dmShareActive ? "Stop Share" : "Share Screen"}
+              </button>
+              <button className="xp-button" onClick={() => setBlackjackPanelOpen(true)}>
+                Activities
               </button>
               <button className="xp-button" onClick={endCall}>End</button>
             </div>
@@ -8410,21 +10543,30 @@ export default function App() {
                 ? selectedGroup.members
                 : groups.find((g) => g.id === groupCall.groupId)?.members) || [])
                 .slice(0, 10)
-                .map((m) => (
-                  <div
-                    key={m.id}
-                    className={`xp-call-avatar ${groupCall.status === "ringing" ? "ringing" : ""} ${
-                      groupSpeakingMap[m.id] ? "speaking" : ""
-                    }`}
-                  >
-                    <img
-                      src={avatarUrl(m.avatar, m.username)}
-                      alt=""
-                      onError={(e) => onAvatarError(e, m.username)}
-                    />
-                    <div className="xp-call-avatar-name">@{m.username}</div>
-                  </div>
-                ))}
+                .map((m) => {
+                  const memberAudioStatus = groupCallAudioStates[m.id] || null;
+                  const memberStatusType = memberAudioStatus?.deafened ? "deafened" : memberAudioStatus?.muted ? "muted" : null;
+                  return (
+                    <div
+                      key={m.id}
+                      className={`xp-call-avatar ${groupCall.status === "ringing" ? "ringing" : ""} ${
+                        groupSpeakingMap[m.id] ? "speaking" : ""
+                      }`}
+                    >
+                      <img
+                        src={avatarUrl(m.avatar, m.username)}
+                        alt=""
+                        onError={(e) => onAvatarError(e, m.username)}
+                      />
+                      {memberStatusType && (
+                        <div className={`xp-call-avatar-status ${memberStatusType}`} title={memberStatusType === "deafened" ? "Deafened" : "Muted"}>
+                          {getAudioStatusIcon(memberStatusType)}
+                        </div>
+                      )}
+                      <div className="xp-call-avatar-name">@{m.username}</div>
+                    </div>
+                  );
+                })}
             </div>
             <div className="xp-call-duration">{formatDuration(groupCallDuration)}</div>
             {screenShareError && <div className="xp-error xp-call-error">{screenShareError}</div>}
@@ -8435,6 +10577,26 @@ export default function App() {
               </div>
             ) : (
               <div className="xp-call-actions">
+                <div className="xp-call-mic">
+                  <button
+                    className={`xp-button xp-icon-btn ${callState.muted ? "muted" : ""}`}
+                    onClick={toggleMute}
+                    title={callState.muted ? "Unmute" : "Mute"}
+                  >
+                    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+                      <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z" fill="none" stroke="currentColor" strokeWidth="2" />
+                      <path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" strokeWidth="2" />
+                      <path d="M12 18v3" fill="none" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                  </button>
+                  <button
+                    className={`xp-button xp-icon-btn ${callState.deafened ? "muted" : ""}`}
+                    onClick={toggleDeafen}
+                    title={callState.deafened ? "Undeafen" : "Deafen"}
+                  >
+                    {getAudioStatusIcon("deafened")}
+                  </button>
+                </div>
                 <button className="xp-button" onClick={startGroupScreenShare}>Share Screen</button>
                 <button className="xp-button xp-icon-btn" type="button" onClick={() => setCallSettingsOpen((p) => !p)}>
                   <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
@@ -8645,20 +10807,15 @@ export default function App() {
           </div>
           <div className="xp-call-window-body">
             {groupLocalScreenRef.current && (
-              <video srcObject={groupLocalScreenRef.current} autoPlay muted playsInline />
+              <StreamVideo stream={groupLocalScreenRef.current} muted />
             )}
             {dmLocalScreenRef.current && (
-              <video srcObject={dmLocalScreenRef.current} autoPlay muted playsInline />
+              <StreamVideo stream={dmLocalScreenRef.current} muted />
             )}
             {screenShareEntries.map((entry) => (
               <div key={entry.id} className="xp-share-tile">
                 <div className="xp-share-label">{entry.name}</div>
-                <video
-                  srcObject={entry.stream}
-                  autoPlay
-                  muted
-                  playsInline
-                />
+                <StreamVideo stream={entry.stream} muted />
               </div>
             ))}
           </div>
@@ -8843,12 +11000,806 @@ export default function App() {
         </div>
       )}
 
+      {blackjackPanelOpen && (
+        <div className="xp-modal-overlay xp-call-overlay" onClick={() => setBlackjackPanelOpen(false)}>
+          <div className="xp-modal xp-blackjack-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="xp-modal-title">
+              <span>Blackjack Activity</span>
+              <button className="xp-modal-close" onClick={() => setBlackjackPanelOpen(false)}>x</button>
+            </div>
+            <div className="xp-modal-body">
+              {renderGameAudioStrip("casino")}
+              {!blackjackMatch && (
+                <div className="xp-blackjack-setup">
+                  <div className="xp-blackjack-setup-card">
+                    <div className="xp-blackjack-title">Invite a friend</div>
+                    <div className="xp-blackjack-sub">
+                      Create a 1v1 table inside your call. Choose a wager and chain.
+                    </div>
+                  <div className="xp-blackjack-form">
+                      <label>
+                        Friend
+                        <select
+                          value={String(blackjackInvite.targetId || blackjackTargetId || "")}
+                          onChange={(e) =>
+                            setBlackjackInvite((prev) => ({ ...prev, targetId: e.target.value }))
+                          }
+                        >
+                          <option value="">Select a friend</option>
+                          {friends.map((friend) => (
+                            <option key={friend.id} value={friend.id}>
+                              @{friend.username}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Wager
+                        <input
+                          value={blackjackInvite.wager}
+                          onChange={(e) =>
+                            setBlackjackInvite((prev) => ({ ...prev, wager: e.target.value }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Token
+                        <select
+                          value={blackjackInvite.token}
+                          onChange={(e) =>
+                            setBlackjackInvite((prev) => ({ ...prev, token: e.target.value }))
+                          }
+                        >
+                          {BLACKJACK_TOKENS.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Chain
+                        <select
+                          value={blackjackInvite.chain}
+                          onChange={(e) =>
+                            setBlackjackInvite((prev) => ({ ...prev, chain: e.target.value }))
+                          }
+                        >
+                          {BLACKJACK_CHAINS.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      className="xp-button"
+                      onClick={() => sendBlackjackInvite(blackjackTargetId)}
+                      disabled={!blackjackTargetId}
+                    >
+                      Invite {blackjackTargetUser?.username ? `@${blackjackTargetUser.username}` : "Friend"}
+                    </button>
+                    {blackjackError && <div className="xp-error">{blackjackError}</div>}
+                  </div>
+                </div>
+              )}
+
+              {blackjackMatch && (
+                <div className="xp-blackjack-room">
+                  <div className="xp-blackjack-header">
+                    <div>
+                      <div className="xp-blackjack-title">Pot</div>
+                      <div className="xp-blackjack-pot">
+                        {blackjackPot.toFixed(2)} {blackjackMatch.token}
+                      </div>
+                    </div>
+                    <div className="xp-blackjack-meta">
+                      <span>{blackjackMatch.chain}</span>
+                      <span>{blackjackMatch.status}</span>
+                    </div>
+                  </div>
+
+                  {blackjackMatch.status === "deposit" && (
+                    <div className="xp-blackjack-deposit">
+                      <div className="xp-blackjack-deposit-info">
+                        <div className="xp-blackjack-title">Deposit to Join</div>
+                        <div className="xp-blackjack-sub">
+                          Send exactly {Number(blackjackMatch.wager_amount).toFixed(2)} {blackjackMatch.token} to the match escrow.
+                        </div>
+                        <div className="xp-blackjack-address">
+                          {blackjackMatch.escrow_address || "Generating address..."}
+                        </div>
+                        {blackjackMatch.escrow_address && (
+                          <button
+                            className="xp-button"
+                            type="button"
+                            onClick={() => copyEscrowAddress(blackjackMatch.escrow_address, setBlackjackUiMessage)}
+                          >
+                            Copy Address
+                          </button>
+                        )}
+                        <div className="xp-blackjack-timer">
+                          Time left: {formatDuration(Math.ceil(blackjackDepositRemaining / 1000))}
+                        </div>
+                        <div className="xp-blackjack-sub">
+                          Network: {BLACKJACK_CHAIN_LABELS[blackjackMatch.chain] || blackjackMatch.chain}
+                        </div>
+                        {selectedWalletOption && (
+                          <div className="xp-blackjack-sub">
+                            Wallet: {selectedWalletOption.label}
+                            {blackjackWallet ? ` · ${blackjackWallet.slice(0, 6)}...${blackjackWallet.slice(-4)}` : ""}
+                          </div>
+                        )}
+                        <div className="xp-blackjack-deposit-list">
+                          {blackjackPlayers.map((p) => {
+                            const info = resolveUserById(p.user_id, { user, friends, friendsAll, manualDmUsers, allUsers });
+                            return (
+                              <div key={p.user_id} className="xp-blackjack-deposit-row">
+                                <img
+                                  src={avatarUrl(info?.avatar, info?.username || "U")}
+                                  alt=""
+                                  onError={(e) => onAvatarError(e, info?.username || "U")}
+                                />
+                                <div>
+                                  <div className="xp-blackjack-deposit-name">@{info?.username || "user"}</div>
+                                  <div className="xp-blackjack-deposit-wallet">
+                                    {p.wallet_address ? `${p.wallet_address.slice(0, 6)}...${p.wallet_address.slice(-4)}` : "Wallet not linked"}
+                                  </div>
+                                </div>
+                                <div className={`xp-blackjack-deposit-status ${p.status}`}>{p.status}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="xp-blackjack-deposit-actions">
+                          {CHAIN_MODE === "evm" ? (
+                            <>
+                              <button
+                                className="xp-button"
+                                onClick={() => openWalletPicker("connect")}
+                                disabled={blackjackActionBusy}
+                              >
+                                {selectedWalletOption
+                                  ? `${selectedWalletOption.label}${blackjackWalletRegistered ? " Connected" : ""}`
+                                  : "Choose Wallet"}
+                              </button>
+                              <button
+                                className="xp-button"
+                                onClick={depositBlackjackOnchain}
+                                disabled={blackjackActionBusy || !blackjackEscrowReady || !selectedWalletOption}
+                              >
+                                Approve + Deposit
+                              </button>
+                              <button
+                                className="xp-button"
+                                onClick={syncBlackjackMatch}
+                                disabled={blackjackActionBusy}
+                              >
+                                Refresh
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="xp-button"
+                              onClick={simulateBlackjackDeposit}
+                              disabled={blackjackActionBusy}
+                            >
+                              Mark Deposited (dev)
+                            </button>
+                          )}
+                        </div>
+                        {CHAIN_MODE === "evm" && !blackjackEscrowReady && (
+                          <div className="xp-muted">Waiting for every player to connect a wallet before deposits open.</div>
+                        )}
+                        {CHAIN_MODE === "evm" && selectedWalletOption && blackjackMatch.chain && (
+                          <div className="xp-muted">
+                            Deposit with {selectedWalletOption.label} on {BLACKJACK_CHAIN_LABELS[blackjackMatch.chain] || blackjackMatch.chain}.
+                          </div>
+                        )}
+                        {blackjackUiMessage && <div className="xp-success">{blackjackUiMessage}</div>}
+                      </div>
+                      <div className="xp-blackjack-qr">
+                        {blackjackMatch.escrow_address && (
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(
+                              blackjackMatch.escrow_address
+                            )}`}
+                            alt="Deposit QR"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {(blackjackMatch.status === "active" || blackjackMatch.status === "ended" || blackjackMatch.status === "settled") && (
+                    <div className="xp-blackjack-table">
+                      <div className="xp-blackjack-dealer">
+                        <div className="xp-blackjack-name">Dealer</div>
+                        <div className="xp-blackjack-cards">
+                          {(blackjackState?.dealer?.cards || []).map((card, idx) =>
+                            renderBjCard(card, idx, blackjackState?.dealer?.status !== "reveal" && idx === 1)
+                          )}
+                        </div>
+                      </div>
+                      <div className="xp-blackjack-players">
+                        {blackjackPlayers.map((p) => {
+                          const info = resolveUserById(p.user_id, { user, friends, friendsAll, manualDmUsers, allUsers });
+                          const pState = blackjackState?.players?.[p.user_id];
+                          return (
+                            <div
+                              key={p.user_id}
+                              className={`xp-blackjack-player ${
+                                blackjackState?.currentPlayerId === p.user_id ? "active" : ""
+                              }`}
+                            >
+                              <div className="xp-blackjack-player-header">
+                                <img
+                                  src={avatarUrl(info?.avatar, info?.username || "U")}
+                                  alt=""
+                                  onError={(e) => onAvatarError(e, info?.username || "U")}
+                                />
+                                <div>
+                                  <div className="xp-blackjack-name">@{info?.username || "user"}</div>
+                                  <div className="xp-blackjack-sub">
+                                    Bet: {Number(blackjackMatch.wager_amount).toFixed(2)} {blackjackMatch.token}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="xp-blackjack-cards">
+                                {(pState?.hands || []).map((hand, handIdx) => (
+                                  <div key={`${p.user_id}-hand-${handIdx}`} className="xp-blackjack-hand">
+                                    <div className="xp-blackjack-hand-label">
+                                      Hand {handIdx + 1} · {hand.status}
+                                    </div>
+                                    <div className="xp-blackjack-hand-cards">
+                                      {hand.cards.map((card, idx) => renderBjCard(card, idx))}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {blackjackMatch.status === "active" && (
+                        <div className="xp-blackjack-actions">
+                          <div className="xp-blackjack-turn">
+                            {blackjackIsMyTurn ? "Your turn" : "Waiting..."}
+                          </div>
+                          <div className="xp-blackjack-buttons">
+                            <button
+                              className="xp-button"
+                              disabled={!blackjackIsMyTurn || blackjackActionBusy}
+                              onClick={() => blackjackAction("hit")}
+                            >
+                              Hit
+                            </button>
+                            <button
+                              className="xp-button"
+                              disabled={!blackjackIsMyTurn || blackjackActionBusy}
+                              onClick={() => blackjackAction("stand")}
+                            >
+                              Stand
+                            </button>
+                            <button
+                              className="xp-button"
+                              disabled={
+                                !blackjackIsMyTurn ||
+                                blackjackActionBusy ||
+                                (blackjackState?.players?.[user?.id]?.hands?.[
+                                  blackjackState?.players?.[user?.id]?.activeHand || 0
+                                ]?.cards?.length || 0) !== 2
+                              }
+                              onClick={() => blackjackAction("double")}
+                            >
+                              Double
+                            </button>
+                            <button
+                              className="xp-button"
+                              disabled={!blackjackIsMyTurn || blackjackActionBusy}
+                              onClick={() => blackjackAction("split")}
+                            >
+                              Split
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {blackjackMatch.status === "ended" && (
+                        <div className="xp-blackjack-results">
+                          {blackjackMatch.winner_id === user?.id ? (
+                            <>
+                              <div className="xp-blackjack-win">You won the match.</div>
+                              <div className="xp-button-row">
+                                <button className="xp-button" onClick={() => setBlackjackClaimOpen(true)}>
+                                  Claim Winnings
+                                </button>
+                                <button className="xp-button" onClick={prepareBlackjackRematch}>
+                                  Rematch
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <div className="xp-blackjack-lose">You lost. Better luck next round.</div>
+                              <button className="xp-button" onClick={prepareBlackjackRematch}>
+                                Rematch
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      {blackjackMatch.status === "settled" && (
+                        <div className="xp-blackjack-results">
+                          <div className="xp-blackjack-win">
+                            Settlement complete {blackjackMatch.settlement_tx ? `(${blackjackMatch.settlement_tx})` : ""}
+                          </div>
+                          <button className="xp-button" onClick={prepareBlackjackRematch}>
+                            Rematch
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {blackjackError && <div className="xp-error">{blackjackError}</div>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {miniGameHubOpen && (
+        <div className="xp-modal-overlay xp-call-overlay" onClick={() => setMiniGameHubOpen(false)}>
+          <div className="xp-modal xp-minigame-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="xp-modal-title">
+              <span>{miniGameMatch ? miniGameGameLabel : "Mini Games"}</span>
+              <button className="xp-modal-close" onClick={() => setMiniGameHubOpen(false)}>x</button>
+            </div>
+            <div className="xp-modal-body">
+              {renderGameAudioStrip(miniGameMatch?.game_type === "coinflip" ? "coinflip" : "casino")}
+              {!miniGameMatch && (
+                <div className="xp-minigame-setup">
+                  <div className="xp-minigame-card">
+                    <div className="xp-minigame-title">Invite a friend</div>
+                    <div className="xp-minigame-sub">
+                      Fast wager games that start from Alerts and settle as soon as both players lock in.
+                    </div>
+                    <div className="xp-minigame-types">
+                      <button
+                        type="button"
+                        className={`xp-minigame-type ${miniGameInvite.gameType === "coinflip" ? "active" : ""}`}
+                        onClick={() => setMiniGameInvite((prev) => ({ ...prev, gameType: "coinflip" }))}
+                      >
+                        <span>Coinflip</span>
+                        <small>1v1 matched wager</small>
+                      </button>
+                      <button
+                        type="button"
+                        className={`xp-minigame-type ${miniGameInvite.gameType === "bigbank" ? "active" : ""}`}
+                        onClick={() => setMiniGameInvite((prev) => ({ ...prev, gameType: "bigbank" }))}
+                      >
+                        <span>Big Bank Small Bank</span>
+                        <small>Highest hidden deposit wins</small>
+                      </button>
+                    </div>
+                    <div className="xp-minigame-form">
+                      <label>
+                        Friend
+                        <select
+                          value={String(miniGameInvite.targetId || miniGameTargetId || "")}
+                          onChange={(e) =>
+                            setMiniGameInvite((prev) => ({ ...prev, targetId: e.target.value }))
+                          }
+                        >
+                          <option value="">Select a friend</option>
+                          {friends.map((friend) => (
+                            <option key={friend.id} value={friend.id}>
+                              @{friend.username}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Wager
+                        <input
+                          value={miniGameInvite.wager}
+                          onChange={(e) =>
+                            setMiniGameInvite((prev) => ({ ...prev, wager: e.target.value }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        Token
+                        <select
+                          value={miniGameInvite.token}
+                          onChange={(e) =>
+                            setMiniGameInvite((prev) => ({ ...prev, token: e.target.value }))
+                          }
+                        >
+                          {BLACKJACK_TOKENS.map((t) => (
+                            <option key={t} value={t}>
+                              {t}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Chain
+                        <select
+                          value={miniGameInvite.chain}
+                          onChange={(e) =>
+                            setMiniGameInvite((prev) => ({ ...prev, chain: e.target.value }))
+                          }
+                        >
+                          {BLACKJACK_CHAINS.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      className="xp-button"
+                      onClick={() => sendMiniGameInvite(miniGameTargetId)}
+                      disabled={!miniGameTargetId || miniGameBusy}
+                    >
+                      Invite {miniGameTargetId ? `@${resolveUserById(miniGameTargetId, { user, friends, friendsAll, manualDmUsers, allUsers })?.username || "Friend"}` : "Friend"}
+                    </button>
+                    {miniGameError && <div className="xp-error">{miniGameError}</div>}
+                  </div>
+                </div>
+              )}
+
+              {miniGameMatch && (
+                <div className="xp-minigame-room">
+                  <div className="xp-minigame-header">
+                    <div>
+                      <div className="xp-minigame-title">{miniGameGameLabel}</div>
+                      <div className="xp-minigame-sub">
+                        {miniGameMatch.game_type === "coinflip"
+                          ? "Match the wager, flip the coin, take the pot."
+                          : "Secretly lock your amount. Highest deposit takes everything."}
+                      </div>
+                    </div>
+                    <div className="xp-minigame-pot">
+                      Pot: {miniGamePot.toFixed(2)} {miniGameMatch.token}
+                    </div>
+                  </div>
+
+                  <div className="xp-minigame-players">
+                    {miniGamePlayers.map((player) => {
+                      const info = resolveUserById(player.user_id, { user, friends, friendsAll, manualDmUsers, allUsers });
+                      return (
+                        <div key={player.user_id} className={`xp-minigame-seat ${miniGameMatch.winner_id === player.user_id ? "winner" : ""}`}>
+                          <img
+                            src={avatarUrl(info?.avatar, info?.username || "U")}
+                            alt=""
+                            onError={(e) => onAvatarError(e, info?.username || "U")}
+                          />
+                          <div className="xp-minigame-seat-meta">
+                            <div className="xp-minigame-seat-name">@{info?.username || "user"}</div>
+                            <div className="xp-minigame-seat-status">{player.status}</div>
+                            {miniGameMatch.game_type === "coinflip" && (
+                              <div className="xp-minigame-seat-side">
+                                {miniGameAssignments[player.user_id]
+                                  ? miniGameAssignments[player.user_id].toUpperCase()
+                                  : "Waiting side"}
+                              </div>
+                            )}
+                          </div>
+                          <div className="xp-minigame-seat-amount">
+                            {player.status === "deposited" || miniGameMatch.status === "ended" || miniGameMatch.status === "settled"
+                              ? `${Number(player.deposited_amount || player.deposit_amount || 0).toFixed(2)} ${miniGameMatch.token}`
+                              : miniGameMatch.game_type === "coinflip"
+                                ? `${Number(miniGameMatch.wager_amount).toFixed(2)} ${miniGameMatch.token}`
+                                : "Hidden"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {miniGameMatch.status === "invited" && (
+                    <div className="xp-minigame-stage">
+                      <div className="xp-minigame-banner">
+                        Invite sent. Waiting for @{resolveUserById(miniGameOpponent?.user_id, { user, friends, friendsAll, manualDmUsers, allUsers })?.username || "friend"} to accept.
+                      </div>
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "deposit" && (
+                    <div className="xp-minigame-stage">
+                      <div className="xp-minigame-countdown">
+                        Round starts in {formatDuration(Math.ceil(miniGameCountdownRemaining / 1000))}
+                      </div>
+                      <div className="xp-minigame-sub">
+                        {miniGameMatch.game_type === "coinflip"
+                          ? `Lock exactly ${Number(miniGameMatch.wager_amount).toFixed(2)} ${miniGameMatch.token}.`
+                          : "Choose your hidden deposit. Highest amount wins the combined pot."}
+                      </div>
+                      {selectedWalletOption && (
+                        <div className="xp-minigame-sub">
+                          Wallet: {selectedWalletOption.label}
+                          {miniGameWalletRegistered
+                            ? ` · ${miniGameWalletRegistered.slice(0, 6)}...${miniGameWalletRegistered.slice(-4)}`
+                            : ""}
+                        </div>
+                      )}
+                      {miniGameMatch.escrow_address && CHAIN_MODE === "evm" && (
+                        <>
+                          <div className="xp-blackjack-address">{miniGameMatch.escrow_address}</div>
+                          <button
+                            className="xp-button"
+                            type="button"
+                            onClick={() => copyEscrowAddress(miniGameMatch.escrow_address, setMiniGameUiMessage)}
+                          >
+                            Copy Address
+                          </button>
+                        </>
+                      )}
+                      <div className="xp-minigame-action-row">
+                        <label>
+                          {miniGameMatch.game_type === "coinflip" ? "Required amount" : "Your deposit"}
+                          <input
+                            value={miniGameMatch.game_type === "coinflip" ? String(miniGameMatch.wager_amount) : miniGameDepositAmount}
+                            onChange={(e) => setMiniGameDepositAmount(e.target.value)}
+                            disabled={miniGameMatch.game_type === "coinflip"}
+                          />
+                        </label>
+                        {CHAIN_MODE === "evm" ? (
+                          <>
+                            <button className="xp-button" onClick={() => openWalletPicker("connect")} disabled={miniGameBusy}>
+                              {selectedWalletOption ? selectedWalletOption.label : "Choose Wallet"}
+                            </button>
+                            <button
+                              className="xp-button"
+                              onClick={depositMiniGameOnchain}
+                              disabled={miniGameBusy || !selectedWalletOption || !miniGameEscrowReady}
+                            >
+                              Approve + Deposit
+                            </button>
+                            <button className="xp-button" onClick={syncMiniGameMatch} disabled={miniGameBusy}>
+                              Refresh
+                            </button>
+                          </>
+                        ) : (
+                          <button className="xp-button" onClick={depositMiniGame} disabled={miniGameBusy}>
+                            Lock Wager
+                          </button>
+                        )}
+                      </div>
+                      {CHAIN_MODE === "evm" && !miniGameEscrowReady && (
+                        <div className="xp-muted">Waiting for every player to register a wallet before deposits open.</div>
+                      )}
+                      {CHAIN_MODE === "evm" && selectedWalletOption && miniGameMatch.chain && (
+                        <div className="xp-muted">
+                          Deposit with {selectedWalletOption.label} on {BLACKJACK_CHAIN_LABELS[miniGameMatch.chain] || miniGameMatch.chain}.
+                        </div>
+                      )}
+                      {miniGameUiMessage && <div className="xp-success">{miniGameUiMessage}</div>}
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "declined" && (
+                    <div className="xp-minigame-stage">
+                      <div className="xp-minigame-loss">Invite declined. No funds were locked.</div>
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "ended" && (
+                    <div className="xp-minigame-stage">
+                      {miniGameMatch.game_type === "coinflip" ? (
+                        <div className={`xp-coinflip-stage ${miniGameMatch.state?.result || ""}`}>
+                          <div className="xp-coinflip-coin">
+                            <span>{(miniGameMatch.state?.result || "?").slice(0, 1).toUpperCase()}</span>
+                          </div>
+                          <div className="xp-minigame-sub">
+                            Coin landed on {(miniGameMatch.state?.result || "unknown").toUpperCase()}.
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="xp-bigbank-stage">
+                          <div className="xp-bigbank-bars">
+                            {miniGamePlayers.map((player) => {
+                              const info = resolveUserById(player.user_id, { user, friends, friendsAll, manualDmUsers, allUsers });
+                              const amount = Number(player.deposited_amount || player.deposit_amount || 0);
+                              const max = Math.max(...miniGamePlayers.map((p) => Number(p.deposited_amount || p.deposit_amount || 0)), 1);
+                              return (
+                                <div key={player.user_id} className="xp-bigbank-bar-row">
+                                  <span>@{info?.username || "user"}</span>
+                                  <div className="xp-bigbank-bar-track">
+                                    <div
+                                      className="xp-bigbank-bar-fill"
+                                      style={{ width: `${Math.max(12, (amount / max) * 100)}%` }}
+                                    />
+                                  </div>
+                                  <strong>{amount.toFixed(2)}</strong>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      <div className={miniGameWinner?.id === user?.id ? "xp-minigame-win" : "xp-minigame-loss"}>
+                        {miniGameWinner?.id === user?.id
+                          ? `You won ${miniGamePot.toFixed(2)} ${miniGameMatch.token}.`
+                          : `@${miniGameWinner?.username || "winner"} won ${miniGamePot.toFixed(2)} ${miniGameMatch.token}.`}
+                      </div>
+                      {miniGameWinner?.id === user?.id && miniGameMatch.status === "ended" && (
+                        <div className="xp-button-row">
+                          <button className="xp-button" onClick={() => setMiniGameClaimOpen(true)}>
+                            Claim Winnings
+                          </button>
+                          <button className="xp-button" onClick={prepareMiniGameRematch}>
+                            Rematch
+                          </button>
+                        </div>
+                      )}
+                      {miniGameWinner?.id !== user?.id && (
+                        <button className="xp-button" onClick={prepareMiniGameRematch}>
+                          Rematch
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "refunded" && (
+                    <div className="xp-minigame-stage">
+                      <div className="xp-minigame-loss">
+                        Big Bank Small Bank tied on the top deposit. The round was refunded.
+                      </div>
+                      {miniGameMatch.settlement_tx && (
+                        <div className="xp-muted">Refund tx: {miniGameMatch.settlement_tx}</div>
+                      )}
+                      <button className="xp-button" onClick={prepareMiniGameRematch}>
+                        Rematch
+                      </button>
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "settled" && (
+                    <div className="xp-minigame-stage">
+                      <div className="xp-minigame-win">
+                        Settlement complete {miniGameMatch.settlement_tx ? `(${miniGameMatch.settlement_tx})` : ""}
+                      </div>
+                      <button className="xp-button" onClick={prepareMiniGameRematch}>
+                        Rematch
+                      </button>
+                    </div>
+                  )}
+
+                  {miniGameError && <div className="xp-error">{miniGameError}</div>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {miniGameClaimOpen && (
+        <div className="xp-modal-overlay xp-call-overlay" onClick={() => setMiniGameClaimOpen(false)}>
+          <div className="xp-modal xp-blackjack-claim" onClick={(e) => e.stopPropagation()}>
+            <div className="xp-modal-title">
+              <span>Claim Mini Game Winnings</span>
+              <button className="xp-modal-close" onClick={() => setMiniGameClaimOpen(false)}>x</button>
+            </div>
+            <div className="xp-modal-body">
+              <div className="xp-blackjack-claim-wallet-row">
+                <button className="xp-button" onClick={() => openWalletPicker("claim")} disabled={miniGameBusy}>
+                  {selectedWalletOption ? `Wallet: ${selectedWalletOption.label}` : "Choose Wallet"}
+                </button>
+                {miniGameClaimAddress && miniGameClaimAddress.startsWith("0x") && (
+                  <div className="xp-muted">
+                    {miniGameClaimAddress.slice(0, 6)}...{miniGameClaimAddress.slice(-4)}
+                  </div>
+                )}
+              </div>
+              <label>
+                Wallet address
+                <input
+                  value={miniGameClaimAddress}
+                  onChange={(e) => setMiniGameClaimAddress(e.target.value)}
+                  placeholder="0x..."
+                />
+              </label>
+              <div className="xp-button-row">
+                <button className="xp-button" onClick={claimMiniGameWinnings} disabled={miniGameBusy}>
+                  Claim
+                </button>
+                <button className="xp-button" onClick={() => setMiniGameClaimOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {blackjackClaimOpen && (
+        <div className="xp-modal-overlay xp-call-overlay" onClick={() => setBlackjackClaimOpen(false)}>
+          <div className="xp-modal xp-blackjack-claim" onClick={(e) => e.stopPropagation()}>
+            <div className="xp-modal-title">
+              <span>Claim Winnings</span>
+              <button className="xp-modal-close" onClick={() => setBlackjackClaimOpen(false)}>x</button>
+            </div>
+            <div className="xp-modal-body">
+              <div className="xp-blackjack-claim-wallet-row">
+                <button className="xp-button" onClick={() => openWalletPicker("claim")} disabled={blackjackActionBusy}>
+                  {selectedWalletOption ? `Wallet: ${selectedWalletOption.label}` : "Choose Wallet"}
+                </button>
+                {blackjackWallet && (
+                  <div className="xp-muted">
+                    {blackjackWallet.slice(0, 6)}...{blackjackWallet.slice(-4)}
+                  </div>
+                )}
+              </div>
+              <label>
+                Wallet address
+                <input
+                  value={blackjackClaimAddress}
+                  onChange={(e) => setBlackjackClaimAddress(e.target.value)}
+                  placeholder="0x..."
+                />
+              </label>
+              <div className="xp-button-row">
+                <button className="xp-button" onClick={claimBlackjackWinnings} disabled={blackjackActionBusy}>
+                  Claim
+                </button>
+                <button className="xp-button" onClick={() => setBlackjackClaimOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {walletPickerOpen && (
+        <div className="xp-modal-overlay xp-call-overlay" onClick={() => setWalletPickerOpen(false)}>
+          <div className="xp-modal xp-wallet-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="xp-modal-title">
+              <span>Choose Wallet</span>
+              <button className="xp-modal-close" onClick={() => setWalletPickerOpen(false)}>x</button>
+            </div>
+            <div className="xp-modal-body">
+              <div className="xp-wallet-picker">
+                {walletOptions.length === 0 && (
+                  <div className="xp-muted">No supported wallet was detected. Install an EVM wallet or configure WalletConnect.</div>
+                )}
+                {walletOptions.map((option) => (
+                  <button
+                    key={option.id}
+                    className={`xp-wallet-option ${blackjackWalletProviderId === option.id ? "active" : ""}`}
+                    onClick={() => chooseBlackjackWallet(option)}
+                  >
+                    <div className="xp-wallet-option-title">{option.label}</div>
+                    <div className="xp-wallet-option-sub">
+                      {option.type === "walletconnect" ? "Mobile and desktop wallets" : "Browser extension / injected wallet"}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <audio ref={gameMusicAudioRef} className="xp-hidden" aria-hidden="true" />
+      <audio ref={coinflipSfxAudioRef} className="xp-hidden" aria-hidden="true" />
+
       {groupCall.participants.map((pid) => (
         <audio key={pid} id={`xp-group-audio-${pid}`} />
       ))}
 
       <audio id="xp-remote-audio" />
       <audio ref={micTestAudioRef} />
+      <audio ref={profileSongAudioRef} />
     </div>
   );
 }

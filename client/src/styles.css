@@ -3723,6 +3723,36 @@ body {
   overflow: hidden;
 }
 
+.xp-call-avatar-status {
+  position: absolute;
+  right: 1px;
+  bottom: 16px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 13, 22, 0.88);
+  color: #f5f7fb;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.28);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.xp-call-avatar-status .xp-icon {
+  width: 11px;
+  height: 11px;
+}
+
+.xp-call-avatar-status.muted {
+  background: rgba(129, 35, 35, 0.92);
+}
+
+.xp-call-avatar-status.deafened {
+  background: rgba(34, 55, 112, 0.92);
+}
+
 .xp-call-avatar.solo img {
   opacity: 0.6;
   filter: grayscale(0.7);
@@ -4937,6 +4967,15 @@ body {
   gap: 8px;
 }
 
+.xp-chat-composer {
+  position: relative;
+  flex: 1;
+}
+
+.xp-chat-composer input {
+  width: 100%;
+}
+
 .xp-audio-preview {
   margin-top: 8px;
   padding: 8px;
@@ -4983,6 +5022,68 @@ body {
   background: #ffffff;
   color: var(--xp-text);
   box-shadow: inset 1px 1px 0 #ffffff;
+}
+
+.xp-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 24;
+  border: 1px solid var(--xp-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff, #edf3fc);
+  box-shadow: 0 10px 24px rgba(12, 30, 67, 0.2);
+  overflow: hidden;
+}
+
+.xp-mention-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.xp-mention-option + .xp-mention-option {
+  border-top: 1px solid rgba(127, 157, 185, 0.22);
+}
+
+.xp-mention-option:hover,
+.xp-mention-option.active {
+  background: linear-gradient(180deg, rgba(99, 146, 222, 0.18), rgba(99, 146, 222, 0.08));
+}
+
+.xp-mention-option img {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(11, 36, 106, 0.2);
+}
+
+.xp-mention-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.xp-mention-option-name {
+  font-weight: 700;
+  color: var(--xp-text);
+}
+
+.xp-mention-option-sub {
+  font-size: 11px;
+  color: var(--xp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .xp-emoji-wrap {
@@ -5559,6 +5660,25 @@ body {
 
 .xp-settings-value {
   color: var(--xp-muted);
+}
+
+.xp-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--xp-text);
+}
+
+.xp-settings-field input {
+  width: 100%;
+}
+
+.xp-settings-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .xp-settings-sub {
@@ -6443,6 +6563,751 @@ body {
   color: var(--xp-muted);
 }
 
+.xp-profile-music-card {
+  display: grid;
+  grid-template-columns: 56px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 8px;
+  border: 1px solid var(--xp-border);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff, #eef3fb);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.xp-profile-music-cover {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #e6edf8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--xp-muted);
+  font-weight: 700;
+  font-size: 20px;
+}
+
+.xp-profile-music-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.xp-profile-music-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.xp-profile-music-title {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--xp-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.xp-profile-music-artist,
+.xp-profile-music-album {
+  font-size: 11px;
+  color: var(--xp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.xp-profile-music-actions {
+  display: flex;
+  align-items: center;
+}
+
+.xp-profile-music-button {
+  border: 1px solid var(--xp-border);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: linear-gradient(180deg, #ffffff, #dfe8f5);
+  cursor: pointer;
+}
+
+.xp-profile-music-button.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.xp-blackjack-modal {
+  width: min(860px, 94vw);
+}
+
+.xp-blackjack-room {
+  display: grid;
+  gap: 16px;
+}
+
+.xp-blackjack-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.xp-blackjack-title {
+  font-weight: 700;
+  color: var(--xp-text);
+}
+
+.xp-blackjack-sub {
+  font-size: 12px;
+  color: var(--xp-muted);
+}
+
+.xp-blackjack-pot {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--xp-blue);
+}
+
+.xp-blackjack-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--xp-muted);
+}
+
+.xp-blackjack-setup {
+  display: grid;
+  place-items: center;
+  min-height: 320px;
+}
+
+.xp-blackjack-setup-card {
+  border: 1px solid var(--xp-border);
+  border-radius: 10px;
+  padding: 16px;
+  background: #f9fbff;
+  width: min(420px, 100%);
+  display: grid;
+  gap: 12px;
+}
+
+.xp-blackjack-form {
+  display: grid;
+  gap: 10px;
+}
+
+.xp-blackjack-form label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.xp-blackjack-form input,
+.xp-blackjack-form select {
+  width: 100%;
+}
+
+.xp-blackjack-deposit {
+  display: grid;
+  grid-template-columns: 1fr 180px;
+  gap: 16px;
+  align-items: start;
+}
+
+.xp-blackjack-address {
+  font-family: "Courier New", monospace;
+  font-size: 12px;
+  padding: 8px;
+  border: 1px solid var(--xp-border);
+  border-radius: 8px;
+  background: #ffffff;
+  word-break: break-all;
+}
+
+.xp-blackjack-timer {
+  font-size: 12px;
+  color: var(--xp-muted);
+}
+
+.xp-blackjack-deposit-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.xp-blackjack-deposit-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xp-blackjack-deposit-row {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 8px;
+  border: 1px solid var(--xp-border);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.xp-blackjack-deposit-row img {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.xp-blackjack-deposit-name {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.xp-blackjack-deposit-wallet {
+  font-size: 11px;
+  color: var(--xp-muted);
+}
+
+.xp-blackjack-deposit-status {
+  font-size: 11px;
+  text-transform: capitalize;
+  color: var(--xp-muted);
+}
+
+.xp-blackjack-deposit-status.deposited {
+  color: #2a9d3f;
+}
+
+.xp-blackjack-qr img {
+  width: 160px;
+  height: 160px;
+  border-radius: 10px;
+  border: 1px solid var(--xp-border);
+  background: #ffffff;
+}
+
+.xp-blackjack-table {
+  border-radius: 18px;
+  padding: 18px;
+  background:
+    radial-gradient(circle at top, #165b3c, #0f4b31 55%, #0b3824);
+  border: 1px solid #0d3b26;
+  color: #f5f8fb;
+  display: grid;
+  gap: 16px;
+  min-height: 380px;
+}
+
+.xp-blackjack-dealer,
+.xp-blackjack-player {
+  display: grid;
+  gap: 8px;
+}
+
+.xp-blackjack-players {
+  display: grid;
+  gap: 14px;
+}
+
+.xp-blackjack-player.active {
+  outline: 2px solid rgba(255, 255, 255, 0.5);
+  outline-offset: 6px;
+  border-radius: 14px;
+}
+
+.xp-blackjack-player-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.xp-blackjack-player-header img {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+
+.xp-blackjack-name {
+  font-weight: 700;
+}
+
+.xp-blackjack-cards {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xp-blackjack-hand {
+  display: grid;
+  gap: 6px;
+  padding: 6px 0;
+}
+
+.xp-blackjack-hand-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  text-transform: capitalize;
+}
+
+.xp-blackjack-hand-cards {
+  display: flex;
+  gap: 8px;
+}
+
+.xp-bj-card {
+  width: 52px;
+  height: 72px;
+  border-radius: 8px;
+  background: #f8f8f8;
+  color: #1b1b1b;
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  display: grid;
+  place-items: center;
+  position: relative;
+  font-weight: 700;
+  font-size: 16px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.18);
+  animation: xp-deal-card 260ms ease-out both;
+}
+
+.xp-bj-card.red {
+  color: #c12c2c;
+}
+
+.xp-bj-card.back {
+  background: linear-gradient(135deg, #2f66c7, #12366f);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+}
+
+.xp-bj-card-back {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.2),
+    rgba(255, 255, 255, 0.2) 6px,
+    rgba(255, 255, 255, 0.05) 6px,
+    rgba(255, 255, 255, 0.05) 12px
+  );
+}
+
+.xp-bj-card-rank {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-size: 12px;
+}
+
+.xp-bj-card-suit {
+  font-size: 20px;
+}
+
+.xp-blackjack-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.xp-blackjack-turn {
+  font-weight: 600;
+}
+
+.xp-blackjack-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.xp-blackjack-results {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  padding: 10px 0;
+}
+
+.xp-blackjack-win {
+  font-weight: 700;
+  color: #f6d26a;
+}
+
+.xp-blackjack-lose {
+  font-weight: 700;
+  color: #ffb3b3;
+}
+
+.xp-blackjack-claim {
+  width: min(420px, 90vw);
+}
+
+.xp-blackjack-claim-wallet-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.xp-wallet-modal {
+  width: min(420px, 92vw);
+}
+
+.xp-game-audio-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(18, 42, 86, 0.14);
+  border-radius: 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 247, 221, 0.92), rgba(246, 232, 184, 0.74)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(241, 246, 255, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.xp-game-audio-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.xp-game-audio-title {
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-game-audio-sub {
+  font-size: 11px;
+  color: #5d6e84;
+}
+
+.xp-game-audio-toggle {
+  min-width: 74px;
+}
+
+.xp-game-audio-toggle.muted {
+  opacity: 0.8;
+}
+
+.xp-minigame-modal {
+  width: min(760px, 94vw);
+}
+
+.xp-minigame-setup,
+.xp-minigame-room {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.xp-minigame-card,
+.xp-minigame-stage,
+.xp-minigame-seat {
+  border: 1px solid rgba(20, 40, 80, 0.16);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(79, 137, 255, 0.16), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(235, 243, 255, 0.92));
+  box-shadow: 0 16px 32px rgba(11, 36, 106, 0.12);
+}
+
+.xp-minigame-card {
+  padding: 18px;
+}
+
+.xp-minigame-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.xp-minigame-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-minigame-sub {
+  color: #51657f;
+}
+
+.xp-minigame-pot {
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #173263, #3d73d0);
+  color: #ffffff;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.xp-minigame-types {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.xp-minigame-type {
+  border: 1px solid rgba(23, 50, 99, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 14px;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xp-minigame-type.active {
+  border-color: #3d73d0;
+  box-shadow: 0 0 0 2px rgba(61, 115, 208, 0.14);
+}
+
+.xp-minigame-type span {
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-minigame-type small {
+  color: #5c6f88;
+}
+
+.xp-minigame-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.xp-minigame-form label,
+.xp-minigame-action-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 600;
+  color: #25426b;
+}
+
+.xp-minigame-form input,
+.xp-minigame-form select,
+.xp-minigame-action-row input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #9db2d3;
+  border-radius: 12px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.xp-minigame-players {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.xp-minigame-seat {
+  padding: 14px;
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.xp-minigame-seat.winner {
+  border-color: rgba(42, 123, 47, 0.4);
+  box-shadow: 0 16px 32px rgba(42, 123, 47, 0.16);
+}
+
+.xp-minigame-seat img {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  object-fit: cover;
+  border: 2px solid rgba(23, 50, 99, 0.15);
+}
+
+.xp-minigame-seat-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.xp-minigame-seat-name {
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-minigame-seat-status,
+.xp-minigame-seat-side {
+  color: #5c6f88;
+}
+
+.xp-minigame-seat-amount {
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-minigame-stage {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  text-align: center;
+}
+
+.xp-minigame-banner,
+.xp-minigame-countdown {
+  font-size: 18px;
+  font-weight: 700;
+  color: #173263;
+}
+
+.xp-minigame-action-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  width: 100%;
+  max-width: 460px;
+}
+
+.xp-minigame-action-row label {
+  flex: 1;
+}
+
+.xp-coinflip-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.xp-coinflip-coin {
+  width: 110px;
+  height: 110px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 30% 30%, #fff8c6, #f2c24d 65%, #c78c16);
+  color: #6a4700;
+  font-size: 44px;
+  font-weight: 800;
+  box-shadow: 0 18px 32px rgba(199, 140, 22, 0.28);
+  animation: xp-coinflip-spin 0.9s ease-out;
+}
+
+.xp-bigbank-stage,
+.xp-bigbank-bars {
+  width: 100%;
+}
+
+.xp-bigbank-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.xp-bigbank-bar-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 64px;
+  gap: 10px;
+  align-items: center;
+}
+
+.xp-bigbank-bar-track {
+  height: 14px;
+  border-radius: 999px;
+  background: rgba(23, 50, 99, 0.1);
+  overflow: hidden;
+}
+
+.xp-bigbank-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #5aa06e, #2f7a45);
+}
+
+.xp-minigame-win,
+.xp-minigame-loss {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.xp-minigame-win {
+  color: #2f7a45;
+}
+
+.xp-minigame-loss {
+  color: #a33f3f;
+}
+
+@keyframes xp-coinflip-spin {
+  from {
+    transform: rotateY(0deg) scale(0.86);
+    opacity: 0.25;
+  }
+  to {
+    transform: rotateY(720deg) scale(1);
+    opacity: 1;
+  }
+}
+
+.xp-wallet-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.xp-wallet-option {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--xp-border);
+  border-radius: 10px;
+  padding: 12px;
+  background: linear-gradient(180deg, #ffffff, #e7eef9);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+}
+
+.xp-wallet-option.active {
+  border-color: var(--xp-blue);
+  box-shadow: 0 0 0 2px rgba(47, 102, 199, 0.18);
+}
+
+.xp-wallet-option-title {
+  font-weight: 700;
+  color: var(--xp-text);
+}
+
+.xp-wallet-option-sub {
+  font-size: 11px;
+  color: var(--xp-muted);
+}
+
+@keyframes xp-deal-card {
+  from {
+    transform: translateY(-14px) scale(0.95);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
 .xp-profile-modal-right {
   display: flex;
   flex-direction: column;
@@ -6450,6 +7315,7 @@ body {
   padding-right: 10px;
   max-height: 300px;
 }
+
 
 .xp-profile-identity {
   display: flex;
@@ -6640,6 +7506,7 @@ body {
   width: 100%;
   resize: none;
 }
+
 
 .xp-profile-actions {
   display: flex;

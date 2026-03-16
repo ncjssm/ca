@@ -54,6 +54,14 @@ export async function initDb() {
       custom_status TEXT,
       bio TEXT,
       ringtone_url TEXT,
+      song_title TEXT,
+      song_artist TEXT,
+      song_album TEXT,
+      song_cover_url TEXT,
+      song_audio_url TEXT,
+      song_source TEXT,
+      song_source_url TEXT,
+      song_updated_at TEXT,
       password_hash TEXT NOT NULL,
       email TEXT,
       email_verified INTEGER NOT NULL DEFAULT 0,
@@ -156,6 +164,8 @@ export async function initDb() {
       from_user_id INTEGER,
       group_id INTEGER,
       context TEXT,
+      ref_id INTEGER,
+      payload TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       read_at TEXT
     );
@@ -248,6 +258,38 @@ export async function initDb() {
   if (!hasRingtone) {
     db.exec("ALTER TABLE users ADD COLUMN ringtone_url TEXT");
   }
+  const hasSongTitle = columns.some((col) => col[1] === "song_title");
+  if (!hasSongTitle) {
+    db.exec("ALTER TABLE users ADD COLUMN song_title TEXT");
+  }
+  const hasSongArtist = columns.some((col) => col[1] === "song_artist");
+  if (!hasSongArtist) {
+    db.exec("ALTER TABLE users ADD COLUMN song_artist TEXT");
+  }
+  const hasSongAlbum = columns.some((col) => col[1] === "song_album");
+  if (!hasSongAlbum) {
+    db.exec("ALTER TABLE users ADD COLUMN song_album TEXT");
+  }
+  const hasSongCoverUrl = columns.some((col) => col[1] === "song_cover_url");
+  if (!hasSongCoverUrl) {
+    db.exec("ALTER TABLE users ADD COLUMN song_cover_url TEXT");
+  }
+  const hasSongAudioUrl = columns.some((col) => col[1] === "song_audio_url");
+  if (!hasSongAudioUrl) {
+    db.exec("ALTER TABLE users ADD COLUMN song_audio_url TEXT");
+  }
+  const hasSongSource = columns.some((col) => col[1] === "song_source");
+  if (!hasSongSource) {
+    db.exec("ALTER TABLE users ADD COLUMN song_source TEXT");
+  }
+  const hasSongSourceUrl = columns.some((col) => col[1] === "song_source_url");
+  if (!hasSongSourceUrl) {
+    db.exec("ALTER TABLE users ADD COLUMN song_source_url TEXT");
+  }
+  const hasSongUpdatedAt = columns.some((col) => col[1] === "song_updated_at");
+  if (!hasSongUpdatedAt) {
+    db.exec("ALTER TABLE users ADD COLUMN song_updated_at TEXT");
+  }
   const hasEmailVerified = columns.some((col) => col[1] === "email_verified");
   if (!hasEmailVerified) {
     db.exec("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0");
@@ -265,6 +307,70 @@ export async function initDb() {
   const hasNotifContext = notifColumns.some((col) => col[1] === "context");
   if (!hasNotifContext) {
     db.exec("ALTER TABLE notifications ADD COLUMN context TEXT");
+  }
+  const hasNotifRef = notifColumns.some((col) => col[1] === "ref_id");
+  if (!hasNotifRef) {
+    db.exec("ALTER TABLE notifications ADD COLUMN ref_id INTEGER");
+  }
+  const hasNotifPayload = notifColumns.some((col) => col[1] === "payload");
+  if (!hasNotifPayload) {
+    db.exec("ALTER TABLE notifications ADD COLUMN payload TEXT");
+  }
+
+  const blackjackColumns =
+    db.exec("PRAGMA table_info(blackjack_matches)")[0]?.values || [];
+  const hasBlackjackTable = blackjackColumns.length > 0;
+  if (hasBlackjackTable) {
+    const hasTokenAddress = blackjackColumns.some((col) => col[1] === "token_address");
+    if (!hasTokenAddress) {
+      db.exec("ALTER TABLE blackjack_matches ADD COLUMN token_address TEXT");
+    }
+    const hasFactoryAddress = blackjackColumns.some((col) => col[1] === "escrow_factory_address");
+    if (!hasFactoryAddress) {
+      db.exec("ALTER TABLE blackjack_matches ADD COLUMN escrow_factory_address TEXT");
+    }
+    const hasEscrowMatchId = blackjackColumns.some((col) => col[1] === "escrow_match_id");
+    if (!hasEscrowMatchId) {
+      db.exec("ALTER TABLE blackjack_matches ADD COLUMN escrow_match_id TEXT");
+    }
+    const hasInviteDeadline = blackjackColumns.some((col) => col[1] === "invite_deadline");
+    if (!hasInviteDeadline) {
+      db.exec("ALTER TABLE blackjack_matches ADD COLUMN invite_deadline TEXT");
+    }
+  }
+
+  const miniGameColumns =
+    db.exec("PRAGMA table_info(mini_game_matches)")[0]?.values || [];
+  const hasMiniGameTable = miniGameColumns.length > 0;
+  if (hasMiniGameTable) {
+    const hasTokenAddress = miniGameColumns.some((col) => col[1] === "token_address");
+    if (!hasTokenAddress) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN token_address TEXT");
+    }
+    const hasFactoryAddress = miniGameColumns.some((col) => col[1] === "escrow_factory_address");
+    if (!hasFactoryAddress) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN escrow_factory_address TEXT");
+    }
+    const hasEscrowMatchId = miniGameColumns.some((col) => col[1] === "escrow_match_id");
+    if (!hasEscrowMatchId) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN escrow_match_id TEXT");
+    }
+    const hasEscrowAddress = miniGameColumns.some((col) => col[1] === "escrow_address");
+    if (!hasEscrowAddress) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN escrow_address TEXT");
+    }
+    const hasDepositDeadline = miniGameColumns.some((col) => col[1] === "deposit_deadline");
+    if (!hasDepositDeadline) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN deposit_deadline TEXT");
+    }
+    const hasClaimAddress = miniGameColumns.some((col) => col[1] === "claim_address");
+    if (!hasClaimAddress) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN claim_address TEXT");
+    }
+    const hasInviteDeadline = miniGameColumns.some((col) => col[1] === "invite_deadline");
+    if (!hasInviteDeadline) {
+      db.exec("ALTER TABLE mini_game_matches ADD COLUMN invite_deadline TEXT");
+    }
   }
 
   const connectionColumns =
@@ -358,8 +464,56 @@ export async function initDb() {
   );
 
   db.exec(
-    "CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL, from_user_id INTEGER, group_id INTEGER, context TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, read_at TEXT)"
+    "CREATE TABLE IF NOT EXISTS notifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL, from_user_id INTEGER, group_id INTEGER, context TEXT, ref_id INTEGER, payload TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, read_at TEXT)"
   );
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS blackjack_matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      inviter_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      token TEXT NOT NULL,
+      token_address TEXT,
+      wager_amount REAL NOT NULL,
+      escrow_factory_address TEXT,
+      escrow_match_id TEXT,
+      escrow_address TEXT,
+      invite_deadline TEXT,
+      deposit_deadline TEXT,
+      players_json TEXT NOT NULL,
+      state_json TEXT,
+      winner_id INTEGER,
+      settlement_tx TEXT,
+      claim_address TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT
+    );
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS mini_game_matches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      game_type TEXT NOT NULL,
+      inviter_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      chain TEXT NOT NULL,
+      token TEXT NOT NULL,
+      token_address TEXT,
+      wager_amount REAL NOT NULL,
+      escrow_factory_address TEXT,
+      escrow_match_id TEXT,
+      escrow_address TEXT,
+      invite_deadline TEXT,
+      deposit_deadline TEXT,
+      players_json TEXT NOT NULL,
+      state_json TEXT,
+      winner_id INTEGER,
+      settlement_tx TEXT,
+      claim_address TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT
+    );
+  `);
 
   persistDb();
   return db;

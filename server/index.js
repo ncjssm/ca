@@ -12,6 +12,7 @@ import path from "path";
 import multer from "multer";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
+import { ethers } from "ethers";
 import { initDb, persistDb, getDb } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -23,6 +24,57 @@ const server = http.createServer(app);
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 const DEV_CLIENT_URL = "http://localhost:5173";
 const allowedOrigins = [CLIENT_URL, DEV_CLIENT_URL].filter(Boolean);
+const CHAIN_MODE = process.env.CHAIN_MODE || "mock";
+const GAME_INVITE_TTL_MS = 2 * 60 * 1000;
+const BLACKJACK_FACTORY_ABI = [
+  "function createMatch(bytes32 matchId,address token,uint256 wager,address[] calldata players,uint64 depositDeadline) external",
+  "function getMatch(bytes32 matchId) external view returns (address token,uint256 wager,uint64 depositDeadline,address winner,bool finalized,bool settled,address[] memory players,uint256[] memory deposits)",
+  "function finalizeMatch(bytes32 matchId,address winner) external",
+];
+const MINI_GAME_FACTORY_ABI = [
+  "function createMatch(bytes32 matchId,address token,uint256 fixedWager,bool variableDeposit,address[] calldata players,uint64 depositDeadline) external",
+  "function getMatch(bytes32 matchId) external view returns (address token,uint256 fixedWager,uint64 depositDeadline,bool variableDeposit,address winner,bool finalized,bool settled,address[] memory players,uint256[] memory deposits,uint256 totalPot)",
+  "function finalizeMatch(bytes32 matchId,address winner) external",
+  "function refundMatch(bytes32 matchId) external",
+];
+const ERC20_ABI = [
+  "function decimals() view returns (uint8)",
+];
+const BLACKJACK_CHAIN_CONFIG = {
+  base: {
+    rpcUrl: process.env.BASE_RPC_URL || "",
+    factoryAddress: process.env.BLACKJACK_FACTORY_ADDRESS_BASE || "",
+    miniGameFactoryAddress: process.env.MINIGAME_FACTORY_ADDRESS_BASE || "",
+    explorerTxUrl: "https://basescan.org/tx/",
+    tokens: {
+      USDC: process.env.BLACKJACK_TOKEN_USDC_BASE || "",
+      USDT: process.env.BLACKJACK_TOKEN_USDT_BASE || "",
+      DAI: process.env.BLACKJACK_TOKEN_DAI_BASE || "",
+    },
+  },
+  arbitrum: {
+    rpcUrl: process.env.ARBITRUM_RPC_URL || "",
+    factoryAddress: process.env.BLACKJACK_FACTORY_ADDRESS_ARBITRUM || "",
+    miniGameFactoryAddress: process.env.MINIGAME_FACTORY_ADDRESS_ARBITRUM || "",
+    explorerTxUrl: "https://arbiscan.io/tx/",
+    tokens: {
+      USDC: process.env.BLACKJACK_TOKEN_USDC_ARBITRUM || "",
+      USDT: process.env.BLACKJACK_TOKEN_USDT_ARBITRUM || "",
+      DAI: process.env.BLACKJACK_TOKEN_DAI_ARBITRUM || "",
+    },
+  },
+  polygon: {
+    rpcUrl: process.env.POLYGON_RPC_URL || "",
+    factoryAddress: process.env.BLACKJACK_FACTORY_ADDRESS_POLYGON || "",
+    miniGameFactoryAddress: process.env.MINIGAME_FACTORY_ADDRESS_POLYGON || "",
+    explorerTxUrl: "https://polygonscan.com/tx/",
+    tokens: {
+      USDC: process.env.BLACKJACK_TOKEN_USDC_POLYGON || "",
+      USDT: process.env.BLACKJACK_TOKEN_USDT_POLYGON || "",
+      DAI: process.env.BLACKJACK_TOKEN_DAI_POLYGON || "",
+    },
+  },
+};
 const io = new SocketServer(server, {
   cors: {
     origin: allowedOrigins,
@@ -293,14 +345,37 @@ async function verifyPassword(raw, hash) {
   return bcrypt.compare(raw, hash);
 }
 
-function emitCallActive(userA, userB, startedAt) {
+function serializeAudioStates(audioStates) {
+  if (!audioStates) return {};
+  const out = {};
+  if (audioStates instanceof Map) {
+    audioStates.forEach((value, key) => {
+      out[key] = {
+        muted: !!value?.muted,
+        deafened: !!value?.deafened,
+      };
+    });
+    return out;
+  }
+  Object.entries(audioStates).forEach(([key, value]) => {
+    out[key] = {
+      muted: !!value?.muted,
+      deafened: !!value?.deafened,
+    };
+  });
+  return out;
+}
+
+function emitCallActive(userA, userB, startedAt, audioStates = null) {
   io.to(`user:${userA}`).emit("call:active", {
     otherId: userB,
     startedAt,
+    audioStates: serializeAudioStates(audioStates),
   });
   io.to(`user:${userB}`).emit("call:active", {
     otherId: userA,
     startedAt,
+    audioStates: serializeAudioStates(audioStates),
   });
 }
 
@@ -335,13 +410,748 @@ function run(sql, params = []) {
 
 function buildProfilePayload(userId) {
   const user = getOne(
-    "SELECT id, username, display_name, custom_status, bio, email, email_verified, avatar, status FROM users WHERE id = ?",
+    "SELECT id, username, display_name, custom_status, bio, email, email_verified, avatar, status, song_title, song_artist, song_album, song_cover_url, song_audio_url, song_source, song_source_url, song_updated_at FROM users WHERE id = ?",
     [userId]
   );
   if (!user) return null;
   const aliasMap = getAliasesForUsers([userId]);
   return { ...user, aliases: aliasMap.get(userId) || [] };
 }
+
+function parseJsonSafe(value, fallback) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function areUsersFriends(userId, otherId) {
+  const row = getOne(
+    `
+      SELECT id FROM friendships
+      WHERE (user1_id = ? AND user2_id = ?)
+         OR (user1_id = ? AND user2_id = ?)
+    `,
+    [userId, otherId, otherId, userId]
+  );
+  return !!row;
+}
+
+function normalizeBlackjackMatch(row) {
+  if (!row) return null;
+  return {
+    ...row,
+    players: parseJsonSafe(row.players_json, []),
+    state: parseJsonSafe(row.state_json, null),
+  };
+}
+
+function getBlackjackMatch(matchId) {
+  const row = getOne("SELECT * FROM blackjack_matches WHERE id = ?", [matchId]);
+  return normalizeBlackjackMatch(row);
+}
+
+function saveBlackjackMatch(match) {
+  run(
+    `
+      UPDATE blackjack_matches
+      SET status = ?, token_address = ?, escrow_factory_address = ?, escrow_match_id = ?, escrow_address = ?, invite_deadline = ?, deposit_deadline = ?, players_json = ?, state_json = ?,
+          winner_id = ?, settlement_tx = ?, claim_address = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    [
+      match.status,
+      match.token_address || null,
+      match.escrow_factory_address || null,
+      match.escrow_match_id || null,
+      match.escrow_address || null,
+      match.invite_deadline || null,
+      match.deposit_deadline || null,
+      JSON.stringify(match.players || []),
+      match.state ? JSON.stringify(match.state) : null,
+      match.winner_id || null,
+      match.settlement_tx || null,
+      match.claim_address || null,
+      nowIso(),
+      match.id,
+    ]
+  );
+}
+
+function getMiniGameMatch(matchId) {
+  const row = getOne("SELECT * FROM mini_game_matches WHERE id = ?", [matchId]);
+  if (!row) return null;
+  return {
+    ...row,
+    players: parseJsonSafe(row.players_json, []),
+    state: parseJsonSafe(row.state_json, null),
+  };
+}
+
+function saveMiniGameMatch(match) {
+  run(
+    `
+      UPDATE mini_game_matches
+      SET status = ?, token_address = ?, escrow_factory_address = ?, escrow_match_id = ?, escrow_address = ?, invite_deadline = ?, deposit_deadline = ?,
+          players_json = ?, state_json = ?, winner_id = ?, settlement_tx = ?, claim_address = ?, updated_at = ?
+      WHERE id = ?
+    `,
+    [
+      match.status,
+      match.token_address || null,
+      match.escrow_factory_address || null,
+      match.escrow_match_id || null,
+      match.escrow_address || null,
+      match.invite_deadline || null,
+      match.deposit_deadline || null,
+      JSON.stringify(match.players || []),
+      match.state ? JSON.stringify(match.state) : null,
+      match.winner_id || null,
+      match.settlement_tx || null,
+      match.claim_address || null,
+      nowIso(),
+      match.id,
+    ]
+  );
+}
+
+function sanitizeMiniGameMatch(match) {
+  if (!match) return null;
+  return {
+    id: match.id,
+    game_type: match.game_type,
+    inviter_id: match.inviter_id,
+    status: match.status,
+    chain: match.chain,
+    token: match.token,
+    token_address: match.token_address,
+    wager_amount: match.wager_amount,
+    escrow_factory_address: match.escrow_factory_address,
+    escrow_match_id: match.escrow_match_id,
+    escrow_address: match.escrow_address,
+    invite_deadline: match.invite_deadline,
+    deposit_deadline: match.deposit_deadline,
+    players: match.players || [],
+    state: match.state || null,
+    winner_id: match.winner_id,
+    settlement_tx: match.settlement_tx,
+    claim_address: match.claim_address,
+    created_at: match.created_at,
+    updated_at: match.updated_at,
+  };
+}
+
+function emitMiniGameUpdate(match) {
+  const payload = sanitizeMiniGameMatch(match);
+  if (!payload) return;
+  (match.players || []).forEach((p) => {
+    io.to(`user:${p.user_id}`).emit("minigame:state", payload);
+  });
+}
+
+function getMiniGameMatchKey(matchId) {
+  return ethers.id(`xp-minigame:${matchId}`);
+}
+
+function isExpiredIso(value) {
+  if (!value) return false;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) && ts <= Date.now();
+}
+
+function getMiniGameFactoryContract(chain, withSigner = false) {
+  const config = getBlackjackChainConfig(chain);
+  if (!config?.miniGameFactoryAddress) {
+    throw new Error(`MINIGAME_FACTORY_ADDRESS not configured for ${chain}`);
+  }
+  const runner = withSigner ? getBlackjackSigner(chain) : getBlackjackProvider(chain);
+  return new ethers.Contract(config.miniGameFactoryAddress, MINI_GAME_FACTORY_ABI, runner);
+}
+
+async function createOnchainMiniGameMatch(match) {
+  const players = (match.players || []).map((p) => p.wallet_address).filter(Boolean);
+  if (players.length !== (match.players || []).length) {
+    throw new Error("All players must register wallets before creating the escrow match");
+  }
+  const tokenAddress = match.token_address || resolveBlackjackToken(match.chain, match.token)?.address;
+  if (!tokenAddress) {
+    throw new Error(`Unsupported token ${match.token} on ${match.chain}`);
+  }
+  const decimals = await getTokenDecimals(match.chain, tokenAddress);
+  const fixedWager =
+    match.game_type === "coinflip"
+      ? ethers.parseUnits(String(match.wager_amount), decimals)
+      : 0n;
+  const factory = getMiniGameFactoryContract(match.chain, true);
+  const depositDeadline = Math.floor(new Date(match.deposit_deadline).getTime() / 1000);
+  const escrowMatchId = match.escrow_match_id || getMiniGameMatchKey(match.id);
+  const tx = await factory.createMatch(
+    escrowMatchId,
+    tokenAddress,
+    fixedWager,
+    match.game_type === "bigbank",
+    players,
+    depositDeadline
+  );
+  await tx.wait();
+  const chainConfig = getBlackjackChainConfig(match.chain);
+  match.token_address = tokenAddress;
+  match.escrow_factory_address = chainConfig?.miniGameFactoryAddress || null;
+  match.escrow_match_id = escrowMatchId;
+  match.escrow_address = chainConfig?.miniGameFactoryAddress || null;
+  match.settlement_tx = tx.hash;
+  return match;
+}
+
+async function syncMiniGameOnchainState(match) {
+  if (!match?.escrow_match_id || !match?.escrow_factory_address) return match;
+  const factory = getMiniGameFactoryContract(match.chain, false);
+  const result = await factory.getMatch(match.escrow_match_id);
+  const players = result[7] || [];
+  const deposits = result[8] || [];
+  const decimals = await getTokenDecimals(match.chain, match.token_address);
+  match.players = (match.players || []).map((player) => {
+    const idx = players.findIndex(
+      (wallet) => wallet && player.wallet_address && wallet.toLowerCase() === player.wallet_address.toLowerCase()
+    );
+    if (idx === -1) return player;
+    const depositValue = deposits[idx] || 0n;
+    return {
+      ...player,
+      deposited_amount: Number(ethers.formatUnits(depositValue, decimals)),
+      status:
+        match.status === "deposit" && depositValue > 0n
+          ? "deposited"
+          : player.status,
+    };
+  });
+  if (result[5] && !match.winner_id) {
+    const winnerWallet = String(result[4] || "").toLowerCase();
+    const winner = (match.players || []).find(
+      (player) => String(player.wallet_address || "").toLowerCase() === winnerWallet
+    );
+    if (winner) match.winner_id = winner.user_id;
+  }
+  if (result[6]) {
+    match.status = "settled";
+  }
+  return match;
+}
+
+async function finalizeMiniGameOnchainMatch(match) {
+  if (!match?.winner_id) throw new Error("Cannot finalize without a winner");
+  const winner = (match.players || []).find((p) => p.user_id === match.winner_id);
+  if (!winner?.wallet_address) throw new Error("Winner wallet is missing");
+  const factory = getMiniGameFactoryContract(match.chain, true);
+  const tx = await factory.finalizeMatch(match.escrow_match_id, winner.wallet_address);
+  await tx.wait();
+  match.settlement_tx = tx.hash;
+  return match;
+}
+
+async function refundMiniGameOnchainMatch(match) {
+  const factory = getMiniGameFactoryContract(match.chain, true);
+  const tx = await factory.refundMatch(match.escrow_match_id);
+  await tx.wait();
+  match.settlement_tx = tx.hash;
+  return match;
+}
+
+function resolveMiniGameWinner(match) {
+  if (!match?.players?.length) return match;
+  if (match.game_type === "coinflip") {
+    if (!match.state?.result) {
+      const side = Math.random() < 0.5 ? "heads" : "tails";
+      const ordered = [...match.players];
+      match.state = {
+        ...(match.state || {}),
+        coinSide: side,
+        assignments: {
+          [ordered[0].user_id]: "heads",
+          [ordered[1].user_id]: "tails",
+        },
+        result: side,
+      };
+    }
+    match.winner_id =
+      (match.players || []).find((p) => match.state?.assignments?.[p.user_id] === match.state?.result)?.user_id || null;
+  } else {
+    const sorted = [...match.players].sort((a, b) => Number(b.deposited_amount || 0) - Number(a.deposited_amount || 0));
+    const topAmount = Number(sorted[0]?.deposited_amount || 0);
+    const runnerUp = Number(sorted[1]?.deposited_amount || 0);
+    if (topAmount > 0 && topAmount === runnerUp) {
+      match.winner_id = null;
+      match.state = {
+        ...(match.state || {}),
+        result: "tie",
+      };
+    } else {
+      match.winner_id = sorted[0]?.user_id || null;
+      match.state = {
+        ...(match.state || {}),
+        result: "highest-deposit",
+      };
+    }
+  }
+  return match;
+}
+
+function maybeNotifyMiniGameWinner(match) {
+  if (!match?.winner_id) return;
+  const payload = JSON.stringify({
+    matchId: match.id,
+    gameType: match.game_type,
+    chain: match.chain,
+    token: match.token,
+  });
+  const existing = getOne(
+    "SELECT id FROM notifications WHERE user_id = ? AND type = 'minigame_claim' AND ref_id = ?",
+    [match.winner_id, match.id]
+  );
+  if (!existing) {
+    run(
+      "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'minigame_claim', ?, ?, 'minigame', ?, ?)",
+      [
+        match.winner_id,
+        `You won ${match.game_type === "bigbank" ? "Big Bank Small Bank" : "Coinflip"}. Claim your winnings.`,
+        match.inviter_id,
+        match.id,
+        payload,
+      ]
+    );
+    io.to(`user:${match.winner_id}`).emit("notify:new");
+  }
+}
+
+function cleanSongText(value, maxLen) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, maxLen);
+}
+
+function cleanSongUrl(value, maxLen = 500) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/")) return trimmed.slice(0, maxLen);
+  if (!/^https?:\/\//i.test(trimmed)) return null;
+  return trimmed.slice(0, maxLen);
+}
+
+function parseSpotifyTitle(rawTitle) {
+  if (!rawTitle) return { title: "", artist: "" };
+  if (rawTitle.includes(" - ")) {
+    const [title, artist] = rawTitle.split(" - ");
+    return { title: title?.trim() || "", artist: artist?.trim() || "" };
+  }
+  if (rawTitle.includes(" • ")) {
+    const [title, artist] = rawTitle.split(" • ");
+    return { title: title?.trim() || "", artist: artist?.trim() || "" };
+  }
+  return { title: rawTitle.trim(), artist: "" };
+}
+
+async function fetchSpotifyOembed(sourceUrl) {
+  if (!sourceUrl) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(
+      `https://open.spotify.com/oembed?url=${encodeURIComponent(sourceUrl)}`,
+      { signal: controller.signal }
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+const BJ_SUITS = ["H", "D", "C", "S"];
+const BJ_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+
+function createDeck() {
+  const deck = [];
+  BJ_SUITS.forEach((suit) => {
+    BJ_RANKS.forEach((rank) => deck.push(`${rank}${suit}`));
+  });
+  return deck;
+}
+
+function shuffleDeck(deck) {
+  const arr = [...deck];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const rand = crypto.randomBytes(4).readUInt32BE(0);
+    const j = rand % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function cardValue(rank) {
+  if (rank === "A") return 11;
+  if (["K", "Q", "J"].includes(rank)) return 10;
+  return Number(rank);
+}
+
+function handValue(cards) {
+  let total = 0;
+  let aces = 0;
+  cards.forEach((card) => {
+    const rank = card.slice(0, -1);
+    total += cardValue(rank);
+    if (rank === "A") aces += 1;
+  });
+  while (total > 21 && aces > 0) {
+    total -= 10;
+    aces -= 1;
+  }
+  return total;
+}
+
+function isBlackjack(cards) {
+  return cards.length === 2 && handValue(cards) === 21;
+}
+
+function canSplit(hand) {
+  if (!hand || hand.cards.length !== 2) return false;
+  const rankA = hand.cards[0].slice(0, -1);
+  const rankB = hand.cards[1].slice(0, -1);
+  return rankA === rankB;
+}
+
+function dealCard(state) {
+  if (!state.deck || state.deck.length === 0) {
+    state.deck = shuffleDeck(createDeck());
+  }
+  return state.deck.pop();
+}
+
+function initBlackjackState(playerIds, wagerAmount) {
+  const deck = shuffleDeck(createDeck());
+  const state = {
+    deck,
+    dealer: { cards: [], status: "hidden" },
+    players: {},
+    order: playerIds,
+    currentPlayerId: playerIds[0],
+    phase: "player",
+    results: {},
+    message: "",
+  };
+  playerIds.forEach((id) => {
+    state.players[id] = {
+      hands: [{ cards: [], bet: wagerAmount, status: "playing" }],
+      activeHand: 0,
+    };
+  });
+  for (let i = 0; i < 2; i += 1) {
+    playerIds.forEach((id) => {
+      state.players[id].hands[0].cards.push(dealCard(state));
+    });
+    state.dealer.cards.push(dealCard(state));
+  }
+  playerIds.forEach((id) => {
+    const hand = state.players[id].hands[0];
+    if (isBlackjack(hand.cards)) {
+      hand.status = "blackjack";
+    }
+  });
+  advanceToNextHand(state);
+  return state;
+}
+
+function advanceToNextHand(state) {
+  for (let i = 0; i < state.order.length; i += 1) {
+    const playerId = state.order[i];
+    const player = state.players[playerId];
+    for (let h = 0; h < player.hands.length; h += 1) {
+      const hand = player.hands[h];
+      if (hand.status === "playing") {
+        player.activeHand = h;
+        state.currentPlayerId = playerId;
+        state.phase = "player";
+        return;
+      }
+    }
+  }
+  state.currentPlayerId = null;
+  state.phase = "dealer";
+}
+
+function finalizeDealer(state) {
+  state.dealer.status = "reveal";
+  while (handValue(state.dealer.cards) < 17) {
+    state.dealer.cards.push(dealCard(state));
+  }
+}
+
+function settleRound(state) {
+  finalizeDealer(state);
+  const dealerValue = handValue(state.dealer.cards);
+  const dealerBust = dealerValue > 21;
+  const results = {};
+  state.order.forEach((playerId) => {
+    const player = state.players[playerId];
+    results[playerId] = player.hands.map((hand) => {
+      if (hand.status === "bust") return { result: "lose", value: handValue(hand.cards) };
+      const value = handValue(hand.cards);
+      if (hand.status === "blackjack" && !dealerBust && dealerValue !== 21) {
+        return { result: "win", value };
+      }
+      if (dealerBust) return { result: "win", value };
+      if (value > dealerValue) return { result: "win", value };
+      if (value < dealerValue) return { result: "lose", value };
+      return { result: "push", value };
+    });
+  });
+  state.results = results;
+  state.phase = "settled";
+}
+
+function applyPlayerAction(state, playerId, action) {
+  const player = state.players[playerId];
+  if (!player) return { ok: false, error: "Player not found" };
+  const hand = player.hands[player.activeHand];
+  if (!hand || hand.status !== "playing") return { ok: false, error: "Invalid hand" };
+  if (action === "hit") {
+    hand.cards.push(dealCard(state));
+    if (handValue(hand.cards) > 21) {
+      hand.status = "bust";
+    }
+  } else if (action === "stand") {
+    hand.status = "stand";
+  } else if (action === "double") {
+    if (hand.cards.length !== 2) return { ok: false, error: "Double not allowed" };
+    hand.bet *= 2;
+    hand.cards.push(dealCard(state));
+    if (handValue(hand.cards) > 21) {
+      hand.status = "bust";
+    } else {
+      hand.status = "stand";
+    }
+  } else if (action === "split") {
+    if (!canSplit(hand)) return { ok: false, error: "Split not allowed" };
+    const [first, second] = hand.cards;
+    hand.cards = [first];
+    const newHand = { cards: [second], bet: hand.bet, status: "playing" };
+    hand.cards.push(dealCard(state));
+    newHand.cards.push(dealCard(state));
+    player.hands.splice(player.activeHand + 1, 0, newHand);
+  } else {
+    return { ok: false, error: "Unknown action" };
+  }
+  advanceToNextHand(state);
+  if (state.phase === "dealer") {
+    settleRound(state);
+  }
+  return { ok: true };
+}
+
+function calculateWinnerFromState(state) {
+  if (!state?.results) return null;
+  const scores = state.order.map((playerId) => {
+    const list = state.results[playerId] || [];
+    const net = list.reduce((sum, r) => sum + (r.result === "win" ? 1 : r.result === "lose" ? -1 : 0), 0);
+    return { playerId, net };
+  });
+  scores.sort((a, b) => b.net - a.net);
+  if (scores.length === 0) return null;
+  if (scores.length > 1 && scores[0].net === scores[1].net) return null;
+  return scores[0].playerId;
+}
+
+function sanitizeBlackjackState(state) {
+  if (!state) return null;
+  const { deck, ...rest } = state;
+  return { ...rest, deckCount: Array.isArray(deck) ? deck.length : 0 };
+}
+
+function sanitizeBlackjackMatch(match) {
+  if (!match) return null;
+  return {
+    id: match.id,
+    inviter_id: match.inviter_id,
+    status: match.status,
+    chain: match.chain,
+    token: match.token,
+    token_address: match.token_address,
+    wager_amount: match.wager_amount,
+    escrow_factory_address: match.escrow_factory_address,
+    escrow_match_id: match.escrow_match_id,
+    escrow_address: match.escrow_address,
+    invite_deadline: match.invite_deadline,
+    deposit_deadline: match.deposit_deadline,
+    players: match.players || [],
+    state: sanitizeBlackjackState(match.state),
+    winner_id: match.winner_id,
+    settlement_tx: match.settlement_tx,
+    claim_address: match.claim_address,
+    created_at: match.created_at,
+    updated_at: match.updated_at,
+  };
+}
+
+function emitBlackjackUpdate(match) {
+  const payload = sanitizeBlackjackMatch(match);
+  if (!payload) return;
+  (match.players || []).forEach((p) => {
+    io.to(`user:${p.user_id}`).emit("blackjack:state", payload);
+  });
+}
+
+function createMockEscrowAddress() {
+  return `0x${crypto.randomBytes(20).toString("hex")}`;
+}
+
+function getBlackjackMatchKey(matchId) {
+  return ethers.id(`xp-blackjack:${matchId}`);
+}
+
+async function createOnchainBlackjackMatch(match) {
+  const players = (match.players || []).map((p) => p.wallet_address).filter(Boolean);
+  if (players.length !== (match.players || []).length) {
+    throw new Error("All players must register wallets before creating the escrow match");
+  }
+  const chainConfig = getBlackjackChainConfig(match.chain);
+  const tokenAddress = match.token_address || resolveBlackjackToken(match.chain, match.token)?.address;
+  if (!tokenAddress) {
+    throw new Error(`Unsupported token ${match.token} on ${match.chain}`);
+  }
+  const decimals = await getTokenDecimals(match.chain, tokenAddress);
+  const wager = ethers.parseUnits(String(match.wager_amount), decimals);
+  const factory = getBlackjackFactoryContract(match.chain, true);
+  const depositDeadline = Math.floor(new Date(match.deposit_deadline).getTime() / 1000);
+  const escrowMatchId = match.escrow_match_id || getBlackjackMatchKey(match.id);
+  const tx = await factory.createMatch(
+    escrowMatchId,
+    tokenAddress,
+    wager,
+    players,
+    depositDeadline
+  );
+  await tx.wait();
+  match.token_address = tokenAddress;
+  match.escrow_factory_address = chainConfig?.factoryAddress || null;
+  match.escrow_match_id = escrowMatchId;
+  match.escrow_address = chainConfig?.factoryAddress || null;
+  match.settlement_tx = tx.hash;
+  return match;
+}
+
+async function syncBlackjackOnchainState(match) {
+  if (!match?.escrow_match_id || !match?.escrow_factory_address) return match;
+  const factory = getBlackjackFactoryContract(match.chain, false);
+  const result = await factory.getMatch(match.escrow_match_id);
+  const players = result[6] || [];
+  const deposits = result[7] || [];
+  match.players = (match.players || []).map((player) => {
+    const idx = players.findIndex(
+      (wallet) => wallet && player.wallet_address && wallet.toLowerCase() === player.wallet_address.toLowerCase()
+    );
+    if (idx === -1) return player;
+    const deposited = deposits[idx] ? Number(deposits[idx] > 0n) : 0;
+    return {
+      ...player,
+      deposited_amount: deposited ? match.wager_amount : 0,
+      status:
+        match.status === "deposit" && deposited
+          ? "deposited"
+          : player.status,
+    };
+  });
+  const allDeposited = (match.players || []).every((player) => player.deposited_amount >= match.wager_amount);
+  if (match.status === "deposit" && allDeposited) {
+    match.status = "active";
+    match.state = initBlackjackState(
+      match.players.map((p) => p.user_id),
+      match.wager_amount
+    );
+  }
+  if (result[4] && !match.winner_id) {
+    const winnerWallet = String(result[3] || "").toLowerCase();
+    const winner = (match.players || []).find(
+      (player) => String(player.wallet_address || "").toLowerCase() === winnerWallet
+    );
+    if (winner) {
+      match.winner_id = winner.user_id;
+    }
+  }
+  if (result[5]) {
+    match.status = "settled";
+  }
+  return match;
+}
+
+async function finalizeBlackjackOnchainMatch(match) {
+  if (!match?.winner_id) {
+    throw new Error("Cannot finalize without a winner");
+  }
+  const winner = (match.players || []).find((p) => p.user_id === match.winner_id);
+  if (!winner?.wallet_address) {
+    throw new Error("Winner wallet is missing");
+  }
+  const factory = getBlackjackFactoryContract(match.chain, true);
+  const tx = await factory.finalizeMatch(match.escrow_match_id, winner.wallet_address);
+  await tx.wait();
+  match.settlement_tx = tx.hash;
+  return match;
+}
+
+function getBlackjackChainConfig(chain) {
+  return BLACKJACK_CHAIN_CONFIG[String(chain || "").toLowerCase()] || null;
+}
+
+function resolveBlackjackToken(chain, token) {
+  const config = getBlackjackChainConfig(chain);
+  const symbol = String(token || "").toUpperCase();
+  if (!config) return null;
+  const address = config.tokens?.[symbol] || "";
+  if (!address) return null;
+  return { symbol, address };
+}
+
+function getBlackjackProvider(chain) {
+  const config = getBlackjackChainConfig(chain);
+  if (!config?.rpcUrl) {
+    throw new Error(`RPC not configured for ${chain}`);
+  }
+  return new ethers.JsonRpcProvider(config.rpcUrl);
+}
+
+function getBlackjackSigner(chain) {
+  const pk = process.env.BLACKJACK_OPERATOR_PRIVATE_KEY || "";
+  if (!pk) {
+    throw new Error("BLACKJACK_OPERATOR_PRIVATE_KEY is not configured");
+  }
+  return new ethers.Wallet(pk, getBlackjackProvider(chain));
+}
+
+function getBlackjackFactoryContract(chain, withSigner = false) {
+  const config = getBlackjackChainConfig(chain);
+  if (!config?.factoryAddress) {
+    throw new Error(`BLACKJACK_FACTORY_ADDRESS not configured for ${chain}`);
+  }
+  const runner = withSigner ? getBlackjackSigner(chain) : getBlackjackProvider(chain);
+  return new ethers.Contract(config.factoryAddress, BLACKJACK_FACTORY_ABI, runner);
+}
+
+async function getTokenDecimals(chain, tokenAddress) {
+  const token = new ethers.Contract(tokenAddress, ERC20_ABI, getBlackjackProvider(chain));
+  return Number(await token.decimals());
+}
+
+function formatEvmError(err, fallback) {
+  return err?.shortMessage || err?.reason || err?.message || fallback;
+}
+
 
 function emitProfileUpdate(userId) {
   const payload = buildProfilePayload(userId);
@@ -963,7 +1773,7 @@ app.delete("/api/stories/:id", requireAuth, (req, res) => {
 
 app.get("/api/me", requireAuth, (req, res) => {
   const user = getOne(
-    "SELECT id, username, display_name, custom_status, bio, email, email_verified, avatar, status, last_seen, ringtone_url FROM users WHERE id = ?",
+    "SELECT id, username, display_name, custom_status, bio, email, email_verified, avatar, status, last_seen, ringtone_url, song_title, song_artist, song_album, song_cover_url, song_audio_url, song_source, song_source_url, song_updated_at FROM users WHERE id = ?",
     [req.session.userId]
   );
   const aliasMap = getAliasesForUsers(user ? [user.id] : []);
@@ -976,7 +1786,7 @@ app.get("/api/me", requireAuth, (req, res) => {
 
 app.get("/api/users", requireAuth, (req, res) => {
   const users = getAll(
-    "SELECT id, username, display_name, custom_status, bio, avatar, status, last_seen FROM users ORDER BY username COLLATE NOCASE"
+    "SELECT id, username, display_name, custom_status, bio, avatar, status, last_seen, song_title, song_artist, song_album, song_cover_url, song_audio_url, song_source, song_source_url, song_updated_at FROM users ORDER BY username COLLATE NOCASE"
   );
   const aliasMap = getAliasesForUsers(users.map((row) => row.id));
   res.json({
@@ -1236,6 +2046,7 @@ app.patch("/api/settings", requireAuth, async (req, res) => {
     password,
     newPassword,
     status,
+    song,
   } = req.body || {};
   const user = getOne("SELECT * FROM users WHERE id = ?", [req.session.userId]);
   if (!user) {
@@ -1324,6 +2135,48 @@ app.patch("/api/settings", requireAuth, async (req, res) => {
   }
   if (req.body?.ringtone === null) {
     run("UPDATE users SET ringtone_url = NULL WHERE id = ?", [user.id]);
+  }
+  if (song === null) {
+    run(
+      "UPDATE users SET song_title = NULL, song_artist = NULL, song_album = NULL, song_cover_url = NULL, song_audio_url = NULL, song_source = NULL, song_source_url = NULL, song_updated_at = ? WHERE id = ?",
+      [new Date().toISOString(), user.id]
+    );
+  } else if (song) {
+    const sourceUrl = cleanSongUrl(song.sourceUrl || song.source_url);
+    const source = cleanSongText(song.source || song.source_type || "", 32);
+    let title = cleanSongText(song.title, 120);
+    let artist = cleanSongText(song.artist, 120);
+    let album = cleanSongText(song.album, 120);
+    let coverUrl = cleanSongUrl(song.coverUrl || song.cover_url);
+    let audioUrl = cleanSongUrl(song.audioUrl || song.audio_url);
+    if (source === "spotify" && sourceUrl) {
+      const meta = await fetchSpotifyOembed(sourceUrl);
+      if (meta?.title) {
+        const parsed = parseSpotifyTitle(meta.title);
+        if (!title) title = cleanSongText(parsed.title, 120);
+        if (!artist) artist = cleanSongText(parsed.artist, 120);
+      }
+      if (!artist && meta?.author_name) {
+        artist = cleanSongText(meta.author_name, 120);
+      }
+      if (!coverUrl && meta?.thumbnail_url) {
+        coverUrl = cleanSongUrl(meta.thumbnail_url);
+      }
+    }
+    run(
+      "UPDATE users SET song_title = ?, song_artist = ?, song_album = ?, song_cover_url = ?, song_audio_url = ?, song_source = ?, song_source_url = ?, song_updated_at = ? WHERE id = ?",
+      [
+        title,
+        artist,
+        album,
+        coverUrl,
+        audioUrl,
+        source,
+        sourceUrl,
+        new Date().toISOString(),
+        user.id,
+      ]
+    );
   }
   if (status) {
     const allowed = ["online", "away", "busy", "invisible"];
@@ -2001,7 +2854,7 @@ app.get("/api/notifications", requireAuth, (req, res) => {
   const rows = getAll(
     `
     SELECT n.id, n.type, n.message, n.created_at, n.read_at,
-           n.from_user_id, n.group_id, n.context,
+           n.from_user_id, n.group_id, n.context, n.ref_id, n.payload,
            u.username AS from_username, u.display_name AS from_display_name,
            g.name AS group_name
     FROM notifications n
@@ -2028,6 +2881,598 @@ app.post("/api/notifications/:id/read", requireAuth, (req, res) => {
 app.post("/api/notifications/clear", requireAuth, (req, res) => {
   run("DELETE FROM notifications WHERE user_id = ?", [req.session.userId]);
   res.json({ ok: true });
+});
+
+app.post("/api/minigames/invite", requireAuth, (req, res) => {
+  const { toId, wagerAmount, token, chain, gameType } = req.body || {};
+  const opponentId = Number(toId);
+  const wager = Number(wagerAmount);
+  const cleanType = String(gameType || "").toLowerCase();
+  if (!["coinflip", "bigbank"].includes(cleanType)) {
+    return res.status(400).json({ error: "Unsupported game type" });
+  }
+  if (!opponentId || opponentId === req.session.userId) {
+    return res.status(400).json({ error: "Invalid opponent" });
+  }
+  if (!areUsersFriends(req.session.userId, opponentId)) {
+    return res.status(403).json({ error: "Not friends" });
+  }
+  if (!wager || Number.isNaN(wager) || wager <= 0) {
+    return res.status(400).json({ error: "Invalid wager" });
+  }
+  const cleanToken = String(token || "USDC").toUpperCase();
+  const cleanChain = String(chain || "base").toLowerCase();
+  const tokenConfig = resolveBlackjackToken(cleanChain, cleanToken);
+  if (CHAIN_MODE === "evm" && !tokenConfig) {
+    return res.status(400).json({ error: `Unsupported token ${cleanToken} on ${cleanChain}` });
+  }
+  const players = [
+    { user_id: req.session.userId, status: "accepted", deposit_amount: cleanType === "coinflip" ? wager : null },
+    { user_id: opponentId, status: "invited", deposit_amount: cleanType === "coinflip" ? wager : null },
+  ];
+  const inviteDeadline = new Date(Date.now() + GAME_INVITE_TTL_MS).toISOString();
+  const info = run(
+    `
+      INSERT INTO mini_game_matches
+        (game_type, inviter_id, status, chain, token, wager_amount, invite_deadline, players_json, state_json)
+      VALUES (?, ?, 'invited', ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      cleanType,
+      req.session.userId,
+      cleanChain,
+      cleanToken,
+      wager,
+      inviteDeadline,
+      JSON.stringify(players),
+      JSON.stringify({ countdownEndsAt: null, result: null, coinSide: null }),
+    ]
+  );
+  const matchId = info.lastInsertRowid;
+  const inviter = getOne("SELECT username FROM users WHERE id = ?", [req.session.userId]);
+  const payload = JSON.stringify({ matchId, gameType: cleanType, wagerAmount: wager, token: cleanToken, expiresAt: inviteDeadline });
+  run(
+    "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'minigame_invite', ?, ?, 'minigame', ?, ?)",
+    [
+      opponentId,
+      `@${inviter?.username || "user"} invited you to ${cleanType === "coinflip" ? "Coinflip" : "Big Bank Small Bank"}`,
+      req.session.userId,
+      matchId,
+      payload,
+    ]
+  );
+  io.to(`user:${opponentId}`).emit("notify:new");
+  res.json({ ok: true, matchId });
+});
+
+app.post("/api/minigames/:id/accept", requireAuth, (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  if (match.status === "invited" && isExpiredIso(match.invite_deadline)) {
+    match.status = "expired";
+    player.status = "expired";
+    saveMiniGameMatch(match);
+    emitMiniGameUpdate(match);
+    return res.status(410).json({ error: "Invitation expired" });
+  }
+  if (match.status !== "invited" && match.status !== "deposit") {
+    return res.status(400).json({ error: "Game not joinable" });
+  }
+  player.status = "accepted";
+  if ((match.players || []).every((p) => p.status === "accepted")) {
+    match.status = "deposit";
+    match.deposit_deadline = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    match.state = {
+      ...(match.state || {}),
+      countdownEndsAt: match.deposit_deadline,
+      result: null,
+      coinSide: null,
+    };
+  }
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/minigames/:id/decline", requireAuth, (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  match.status = "declined";
+  player.status = "declined";
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true });
+});
+
+app.get("/api/minigames/:id", requireAuth, (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  const player = (match.players || []).some((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  Promise.resolve()
+    .then(async () => {
+      if (CHAIN_MODE === "evm" && (match.status === "deposit" || match.status === "ended" || match.status === "settled")) {
+        await syncMiniGameOnchainState(match);
+        saveMiniGameMatch(match);
+      }
+      res.json({ match: sanitizeMiniGameMatch(match) });
+    })
+    .catch((err) => {
+      res.status(500).json({ error: formatEvmError(err, "Unable to load game") });
+    });
+});
+
+app.post("/api/minigames/:id/wallet", requireAuth, async (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  const { walletAddress } = req.body || {};
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  if (match.status !== "deposit") return res.status(400).json({ error: "Wallet registration is closed" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  let normalized;
+  try {
+    normalized = ethers.getAddress(String(walletAddress || "").trim());
+  } catch {
+    return res.status(400).json({ error: "Invalid wallet address" });
+  }
+  player.wallet_address = normalized;
+  const readyForEscrow =
+    CHAIN_MODE === "evm" &&
+    (match.players || []).every((entry) => !!entry.wallet_address) &&
+    !match.escrow_match_id;
+  if (readyForEscrow) {
+    try {
+      await createOnchainMiniGameMatch(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to create game escrow") });
+    }
+  }
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/minigames/:id/deposit/mock", requireAuth, async (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  const { amount } = req.body || {};
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  if (match.status !== "deposit") return res.status(400).json({ error: "Deposits are closed" });
+  if (CHAIN_MODE !== "mock") return res.status(403).json({ error: "Mock deposits disabled" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  const depositAmount = match.game_type === "coinflip" ? Number(match.wager_amount) : Number(amount);
+  if (!depositAmount || Number.isNaN(depositAmount) || depositAmount <= 0) {
+    return res.status(400).json({ error: "Invalid deposit amount" });
+  }
+  player.deposit_amount = depositAmount;
+  player.deposited_amount = depositAmount;
+  player.status = "deposited";
+  const allDeposited = (match.players || []).every((p) => p.status === "deposited");
+  if (allDeposited) {
+    match.status = "ended";
+    resolveMiniGameWinner(match);
+    if (!match.winner_id && match.game_type === "bigbank") {
+      match.status = "refunded";
+      match.state = { ...(match.state || {}), result: "tie" };
+    } else {
+      maybeNotifyMiniGameWinner(match);
+    }
+  }
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/minigames/:id/sync", requireAuth, async (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  const player = (match.players || []).some((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  if (CHAIN_MODE === "evm") {
+    try {
+      await syncMiniGameOnchainState(match);
+      const allDeposited = (match.players || []).every((p) => Number(p.deposited_amount || 0) > 0);
+      if (match.status === "deposit" && allDeposited) {
+        match.status = "ended";
+        resolveMiniGameWinner(match);
+        if (!match.winner_id && match.game_type === "bigbank") {
+          await refundMiniGameOnchainMatch(match);
+          match.status = "refunded";
+          match.state = { ...(match.state || {}), result: "tie" };
+        } else {
+          await finalizeMiniGameOnchainMatch(match);
+          maybeNotifyMiniGameWinner(match);
+        }
+      }
+      saveMiniGameMatch(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to sync game escrow") });
+    }
+  }
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/minigames/:id/claim", requireAuth, async (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  const { walletAddress, txHash } = req.body || {};
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  if (match.status !== "ended" && match.status !== "settled") {
+    return res.status(400).json({ error: "Game not finalized" });
+  }
+  if (match.winner_id !== req.session.userId) {
+    return res.status(403).json({ error: "Only winner can claim" });
+  }
+  const addr = String(walletAddress || "").trim();
+  if (addr) {
+    try {
+      match.claim_address = ethers.getAddress(addr);
+    } catch {
+      return res.status(400).json({ error: "Invalid wallet address" });
+    }
+  }
+  if (CHAIN_MODE === "mock") {
+    match.settlement_tx = `mock-${Date.now()}`;
+  } else if (txHash) {
+    match.settlement_tx = String(txHash);
+  } else {
+    try {
+      await syncMiniGameOnchainState(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to verify claim") });
+    }
+  }
+  match.status = "settled";
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/minigames/:id/deposit", requireAuth, (req, res) => {
+  if (CHAIN_MODE === "evm") {
+    return res.status(403).json({ error: "Use the on-chain deposit flow" });
+  }
+  const match = getMiniGameMatch(Number(req.params.id));
+  const { amount } = req.body || {};
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  if (match.status !== "deposit") return res.status(400).json({ error: "Deposits are closed" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  const depositAmount = match.game_type === "coinflip" ? Number(match.wager_amount) : Number(amount);
+  if (!depositAmount || Number.isNaN(depositAmount) || depositAmount <= 0) {
+    return res.status(400).json({ error: "Invalid deposit amount" });
+  }
+  player.deposit_amount = depositAmount;
+  player.deposited_amount = depositAmount;
+  player.status = "deposited";
+  const allDeposited = (match.players || []).every((p) => p.status === "deposited");
+  if (allDeposited) {
+    match.status = "ended";
+    resolveMiniGameWinner(match);
+    if (!match.winner_id && match.game_type === "bigbank") {
+      match.status = "refunded";
+      match.state = { ...(match.state || {}), result: "tie" };
+    } else {
+      maybeNotifyMiniGameWinner(match);
+    }
+  }
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+});
+
+app.post("/api/blackjack/invite", requireAuth, (req, res) => {
+  const { toId, wagerAmount, token, chain } = req.body || {};
+  const opponentId = Number(toId);
+  const wager = Number(wagerAmount);
+  if (!opponentId || opponentId === req.session.userId) {
+    return res.status(400).json({ error: "Invalid opponent" });
+  }
+  if (!areUsersFriends(req.session.userId, opponentId)) {
+    return res.status(403).json({ error: "Not friends" });
+  }
+  if (!wager || Number.isNaN(wager) || wager <= 0) {
+    return res.status(400).json({ error: "Invalid wager" });
+  }
+  const cleanToken = String(token || "USDC").toUpperCase();
+  const cleanChain = String(chain || "base").toLowerCase();
+  const tokenConfig = resolveBlackjackToken(cleanChain, cleanToken);
+  if (CHAIN_MODE === "evm" && !tokenConfig) {
+    return res.status(400).json({ error: `Unsupported token ${cleanToken} on ${cleanChain}` });
+  }
+  const players = [
+    {
+      user_id: req.session.userId,
+      status: "accepted",
+      deposited_amount: 0,
+      deposit_tx: null,
+      wallet_address: null,
+    },
+    {
+      user_id: opponentId,
+      status: "invited",
+      deposited_amount: 0,
+      deposit_tx: null,
+      wallet_address: null,
+    },
+  ];
+  const inviteDeadline = new Date(Date.now() + GAME_INVITE_TTL_MS).toISOString();
+  const info = run(
+    `
+      INSERT INTO blackjack_matches
+        (inviter_id, status, chain, token, token_address, wager_amount, invite_deadline, players_json)
+      VALUES (?, 'invited', ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      req.session.userId,
+      cleanChain,
+      cleanToken,
+      tokenConfig?.address || null,
+      wager,
+      inviteDeadline,
+      JSON.stringify(players),
+    ]
+  );
+  const matchId = info.lastInsertRowid;
+  const inviter = getOne("SELECT username FROM users WHERE id = ?", [req.session.userId]);
+  const inviterName = inviter?.username || "user";
+  const payload = JSON.stringify({
+    matchId,
+    chain: cleanChain,
+    token: cleanToken,
+    wagerAmount: wager,
+    expiresAt: inviteDeadline,
+  });
+  run(
+    "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'blackjack_invite', ?, ?, 'blackjack', ?, ?)",
+    [
+      opponentId,
+      `@${inviterName} invited you to Blackjack`,
+      req.session.userId,
+      matchId,
+      payload,
+    ]
+  );
+  io.to(`user:${opponentId}`).emit("notify:new");
+  res.json({ ok: true, matchId });
+});
+
+app.post("/api/blackjack/:id/accept", requireAuth, (req, res) => {
+  const matchId = Number(req.params.id);
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  if (match.status === "invited" && isExpiredIso(match.invite_deadline)) {
+    match.status = "expired";
+    player.status = "expired";
+    saveBlackjackMatch(match);
+    emitBlackjackUpdate(match);
+    return res.status(410).json({ error: "Invitation expired" });
+  }
+  if (match.status !== "invited" && match.status !== "deposit") {
+    return res.status(400).json({ error: "Match not joinable" });
+  }
+  player.status = "accepted";
+  const allAccepted = (match.players || []).every((p) => p.status === "accepted");
+  if (allAccepted && match.status === "invited") {
+    match.status = "deposit";
+    match.deposit_deadline = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    if (CHAIN_MODE === "mock") {
+      match.escrow_address = createMockEscrowAddress();
+    }
+  }
+  saveBlackjackMatch(match);
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
+});
+
+app.post("/api/blackjack/:id/decline", requireAuth, (req, res) => {
+  const matchId = Number(req.params.id);
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  match.status = "declined";
+  player.status = "declined";
+  saveBlackjackMatch(match);
+  const inviterId = match.inviter_id;
+  const decliner = getOne("SELECT username FROM users WHERE id = ?", [req.session.userId]);
+  run(
+    "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id) VALUES (?, 'blackjack_declined', ?, ?, 'blackjack', ?)",
+    [
+      inviterId,
+      `@${decliner?.username || "user"} declined your Blackjack invite`,
+      req.session.userId,
+      matchId,
+    ]
+  );
+  io.to(`user:${inviterId}`).emit("notify:new");
+  emitBlackjackUpdate(match);
+  res.json({ ok: true });
+});
+
+app.get("/api/blackjack/:id", requireAuth, (req, res) => {
+  const matchId = Number(req.params.id);
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  const participant = (match.players || []).some((p) => p.user_id === req.session.userId);
+  if (!participant) return res.status(403).json({ error: "Not a participant" });
+  Promise.resolve()
+    .then(async () => {
+      if (CHAIN_MODE === "evm" && (match.status === "deposit" || match.status === "ended" || match.status === "settled")) {
+        await syncBlackjackOnchainState(match);
+        saveBlackjackMatch(match);
+      }
+      res.json({ match: sanitizeBlackjackMatch(match) });
+    })
+    .catch((err) => {
+      res.status(500).json({ error: formatEvmError(err, "Unable to load blackjack match") });
+    });
+});
+
+app.post("/api/blackjack/:id/wallet", requireAuth, async (req, res) => {
+  const matchId = Number(req.params.id);
+  const { walletAddress } = req.body || {};
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  if (match.status !== "deposit") return res.status(400).json({ error: "Wallet registration is closed" });
+  let normalized;
+  try {
+    normalized = ethers.getAddress(String(walletAddress || "").trim());
+  } catch {
+    return res.status(400).json({ error: "Invalid wallet address" });
+  }
+  player.wallet_address = normalized;
+  const readyForEscrow =
+    CHAIN_MODE === "evm" &&
+    (match.players || []).every((entry) => !!entry.wallet_address) &&
+    !match.escrow_match_id;
+  if (readyForEscrow) {
+    try {
+      await createOnchainBlackjackMatch(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to create escrow match") });
+    }
+  }
+  saveBlackjackMatch(match);
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
+});
+
+app.post("/api/blackjack/:id/deposit/mock", requireAuth, (req, res) => {
+  if (CHAIN_MODE !== "mock") {
+    return res.status(403).json({ error: "Mock deposits disabled" });
+  }
+  const matchId = Number(req.params.id);
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  if (match.status !== "deposit") {
+    return res.status(400).json({ error: "Deposits not open" });
+  }
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  player.status = "deposited";
+  player.deposit_tx = `mock-${Date.now()}`;
+  player.deposited_amount = match.wager_amount;
+  const allDeposited = (match.players || []).every((p) => p.status === "deposited");
+  if (allDeposited) {
+    match.status = "active";
+    match.state = initBlackjackState(
+      match.players.map((p) => p.user_id),
+      match.wager_amount
+    );
+  }
+  saveBlackjackMatch(match);
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
+});
+
+app.post("/api/blackjack/:id/sync", requireAuth, async (req, res) => {
+  const matchId = Number(req.params.id);
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  const participant = (match.players || []).some((p) => p.user_id === req.session.userId);
+  if (!participant) return res.status(403).json({ error: "Not a participant" });
+  if (CHAIN_MODE === "evm") {
+    try {
+      await syncBlackjackOnchainState(match);
+      saveBlackjackMatch(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to sync deposits") });
+    }
+  }
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
+});
+
+app.post("/api/blackjack/:id/action", requireAuth, async (req, res) => {
+  const matchId = Number(req.params.id);
+  const { action } = req.body || {};
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  if (match.status !== "active") return res.status(400).json({ error: "Match not active" });
+  if (!match.state) return res.status(400).json({ error: "Match state missing" });
+  if (match.state.currentPlayerId !== req.session.userId) {
+    return res.status(403).json({ error: "Not your turn" });
+  }
+  const result = applyPlayerAction(match.state, req.session.userId, String(action || "").toLowerCase());
+  if (!result.ok) return res.status(400).json({ error: result.error });
+  if (match.state.phase === "settled") {
+    match.status = "ended";
+    match.winner_id = calculateWinnerFromState(match.state);
+    if (match.winner_id && CHAIN_MODE === "evm") {
+      try {
+        await finalizeBlackjackOnchainMatch(match);
+      } catch (err) {
+        return res.status(500).json({ error: formatEvmError(err, "Unable to finalize the escrow match") });
+      }
+    }
+    if (match.winner_id) {
+      const payload = JSON.stringify({
+        matchId: match.id,
+        chain: match.chain,
+        token: match.token,
+        pot: match.wager_amount * (match.players?.length || 2),
+      });
+      run(
+        "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'blackjack_claim', ?, ?, 'blackjack', ?, ?)",
+        [
+          match.winner_id,
+          "You won the Blackjack match. Claim your winnings.",
+          match.inviter_id,
+          match.id,
+          payload,
+        ]
+      );
+      io.to(`user:${match.winner_id}`).emit("notify:new");
+    }
+  }
+  saveBlackjackMatch(match);
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
+});
+
+app.post("/api/blackjack/:id/claim", requireAuth, async (req, res) => {
+  const matchId = Number(req.params.id);
+  const { walletAddress, txHash } = req.body || {};
+  const match = getBlackjackMatch(matchId);
+  if (!match) return res.status(404).json({ error: "Match not found" });
+  if (match.status !== "ended" && match.status !== "settled") {
+    return res.status(400).json({ error: "Match not finalized" });
+  }
+  if (match.winner_id !== req.session.userId) {
+    return res.status(403).json({ error: "Only winner can claim" });
+  }
+  const addr = String(walletAddress || "").trim();
+  if (addr) {
+    try {
+      match.claim_address = ethers.getAddress(addr);
+    } catch {
+      return res.status(400).json({ error: "Invalid wallet address" });
+    }
+  }
+  if (CHAIN_MODE === "mock") {
+    match.settlement_tx = `mock-${Date.now()}`;
+  } else if (txHash) {
+    match.settlement_tx = String(txHash);
+  } else {
+    try {
+      await syncBlackjackOnchainState(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to verify claim") });
+    }
+  }
+  match.status = "settled";
+  saveBlackjackMatch(match);
+  emitBlackjackUpdate(match);
+  res.json({ ok: true, match: sanitizeBlackjackMatch(match) });
 });
 
 app.post("/api/groups", requireAuth, (req, res) => {
@@ -2955,9 +4400,18 @@ io.on("connection", (socket) => {
       timerId: null,
       joined: true,
       participants: new Set([pending.callerId, pending.calleeId]),
+      audioStates: new Map([
+        [pending.callerId, { muted: false, deafened: false }],
+        [pending.calleeId, { muted: false, deafened: false }],
+      ]),
     });
     // Start message already sent on call request.
-    emitCallActive(pending.callerId, pending.calleeId, startedAt);
+    emitCallActive(
+      pending.callerId,
+      pending.calleeId,
+      startedAt,
+      callSessions.get(key)?.audioStates
+    );
     io.to(`user:${pending.callerId}`).emit("call:joined", { otherId: pending.calleeId });
     io.to(`user:${pending.calleeId}`).emit("call:joined", { otherId: pending.callerId });
     io.to(`user:${toId}`).emit("call:accept", { fromId: userId });
@@ -3035,9 +4489,36 @@ io.on("connection", (socket) => {
     io.to(`user:${userId}`).emit("call:rejoin-ack", {
       otherId: toId,
       startedAt: session.startedAt,
+      audioStates: serializeAudioStates(session.audioStates),
     });
     io.to(`user:${userId}`).emit("call:joined", { otherId: toId });
     io.to(`user:${toId}`).emit("call:joined", { otherId: userId });
+  });
+
+  socket.on("call:status", (payload) => {
+    const { toId, muted, deafened } = payload || {};
+    const otherId = toId || activeCalls.get(userId);
+    if (!otherId) return;
+    const key = callKey(userId, otherId);
+    const session = callSessions.get(key);
+    if (!session) return;
+    if (!session.audioStates) {
+      session.audioStates = new Map();
+    }
+    session.audioStates.set(userId, {
+      muted: !!muted,
+      deafened: !!deafened,
+    });
+    io.to(`user:${userId}`).emit("call:status", {
+      userId,
+      muted: !!muted,
+      deafened: !!deafened,
+    });
+    io.to(`user:${otherId}`).emit("call:status", {
+      userId,
+      muted: !!muted,
+      deafened: !!deafened,
+    });
   });
 
   socket.on("call:leave", (payload) => {
@@ -3098,6 +4579,7 @@ io.on("connection", (socket) => {
         ringTimerId: null,
         soloTimerId: null,
         missedNotified: false,
+        audioStates: new Map([[userId, { muted: false, deafened: false }]]),
       });
       const caller = getOne("SELECT username FROM users WHERE id = ?", [userId]);
       emitSystemGroupMessage(
@@ -3141,6 +4623,12 @@ io.on("connection", (socket) => {
     if (userId !== call.initiatorId) {
       call.answered = true;
     }
+    if (!call.audioStates) {
+      call.audioStates = new Map();
+    }
+    if (!call.audioStates.has(userId)) {
+      call.audioStates.set(userId, { muted: false, deafened: false });
+    }
     if (call.soloTimerId) {
       clearTimeout(call.soloTimerId);
       call.soloTimerId = null;
@@ -3179,6 +4667,7 @@ io.on("connection", (socket) => {
       groupId,
       participants,
       startedAt: call.startedAt,
+      audioStates: serializeAudioStates(call.audioStates),
     });
     io.to(`group:${groupId}`).emit("group:call:join", {
       groupId,
@@ -3187,6 +4676,27 @@ io.on("connection", (socket) => {
     io.to(`group:${groupId}`).emit("group:call:active", {
       groupId,
       startedAt: call.startedAt,
+      audioStates: serializeAudioStates(call.audioStates),
+    });
+  });
+
+  socket.on("group:call:status", (payload) => {
+    const { groupId, muted, deafened } = payload || {};
+    if (!groupId) return;
+    const call = groupCalls.get(groupId);
+    if (!call || !call.participants?.has(userId)) return;
+    if (!call.audioStates) {
+      call.audioStates = new Map();
+    }
+    call.audioStates.set(userId, {
+      muted: !!muted,
+      deafened: !!deafened,
+    });
+    io.to(`group:${groupId}`).emit("group:call:status", {
+      groupId,
+      userId,
+      muted: !!muted,
+      deafened: !!deafened,
     });
   });
 
