@@ -11080,9 +11080,25 @@ export default function App() {
               {!blackjackLoadingMatch && !blackjackMatch && (
                 <div className="xp-blackjack-setup">
                   <div className="xp-blackjack-setup-card">
+                    <div className="xp-blackjack-setup-meta">
+                      <span className="xp-blackjack-kicker">Private Table</span>
+                      <span className="xp-blackjack-kicker muted">1v1</span>
+                    </div>
                     <div className="xp-blackjack-title">Invite a friend</div>
                     <div className="xp-blackjack-sub">
                       Create a 1v1 table. Set how much each player risks, then choose the token and network.
+                    </div>
+                    <div className="xp-blackjack-summary">
+                      <div className="xp-blackjack-summary-item">
+                        <span>Wager</span>
+                        <strong>
+                          {Number(blackjackInvite.wager || 0) > 0 ? String(blackjackInvite.wager) : "0"} {blackjackInvite.token}
+                        </strong>
+                      </div>
+                      <div className="xp-blackjack-summary-item">
+                        <span>Network</span>
+                        <strong>{formatGameChainLabel(blackjackInvite.chain)}</strong>
+                      </div>
                     </div>
                   <div className="xp-blackjack-form">
                       {renderGameSelect({
@@ -11130,7 +11146,7 @@ export default function App() {
                       </label>
                     </div>
                     <button
-                      className="xp-button"
+                      className="xp-button xp-blackjack-primary"
                       onClick={() => sendBlackjackInvite(blackjackTargetId)}
                       disabled={!blackjackTargetId}
                     >

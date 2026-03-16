@@ -6682,11 +6682,14 @@ body {
 .xp-blackjack-title {
   font-weight: 700;
   color: var(--xp-text);
+  font-size: 30px;
+  line-height: 1;
 }
 
 .xp-blackjack-sub {
-  font-size: 12px;
-  color: var(--xp-muted);
+  font-size: 13px;
+  line-height: 1.45;
+  color: #667383;
 }
 
 .xp-blackjack-pot {
@@ -6704,20 +6707,27 @@ body {
 
 .xp-blackjack-setup {
   display: grid;
-  place-items: center;
-  min-height: 320px;
+  align-items: center;
+  justify-items: end;
+  min-height: 380px;
   position: relative;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 16px;
+  padding: 26px 34px;
+  background:
+    linear-gradient(90deg, rgba(245, 247, 252, 0.56) 0%, rgba(245, 247, 252, 0.18) 40%, rgba(248, 250, 253, 0.74) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(248, 250, 252, 0.8));
+  border: 1px solid rgba(182, 191, 202, 0.32);
 }
 
 .xp-blackjack-setup::before {
   content: "";
   position: absolute;
-  inset: 0;
-  background: url("/desktop/blackjack.png") center / cover no-repeat;
-  opacity: 0.035;
-  filter: saturate(0.75) blur(0.2px);
+  inset: 16px auto 16px 18px;
+  width: 58%;
+  background: url("/desktop/blackjack.png") left center / cover no-repeat;
+  opacity: 0.14;
+  filter: saturate(0.82) contrast(0.96);
   pointer-events: none;
 }
 
@@ -6727,19 +6737,75 @@ body {
 }
 
 .xp-blackjack-setup-card {
-  border: 1px solid var(--xp-border);
-  border-radius: 10px;
-  padding: 16px;
-  background: rgba(249, 251, 255, 0.9);
-  backdrop-filter: blur(2.5px);
-  width: min(420px, 100%);
+  border: 1px solid rgba(173, 182, 194, 0.72);
+  border-radius: 16px;
+  padding: 22px 22px 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.9));
+  backdrop-filter: blur(5px);
+  width: min(430px, calc(100% - 40px));
   display: grid;
-  gap: 12px;
+  gap: 14px;
+  box-shadow:
+    0 18px 40px rgba(35, 45, 59, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.84);
 }
 
 .xp-blackjack-loading-card {
   min-height: 150px;
   align-content: center;
+}
+
+.xp-blackjack-setup-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.xp-blackjack-kicker {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border: 1px solid rgba(174, 183, 194, 0.72);
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #48586d;
+}
+
+.xp-blackjack-kicker.muted {
+  color: #6c7887;
+}
+
+.xp-blackjack-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.xp-blackjack-summary-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid rgba(205, 212, 221, 0.88);
+  border-radius: 12px;
+  background: rgba(252, 253, 255, 0.88);
+}
+
+.xp-blackjack-summary-item span {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #7a8695;
+}
+
+.xp-blackjack-summary-item strong {
+  font-size: 14px;
+  color: #243444;
 }
 
 .xp-blackjack-loading-line {
@@ -6771,7 +6837,7 @@ body {
 
 .xp-blackjack-form {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .xp-blackjack-form label,
@@ -6801,11 +6867,11 @@ body {
 .xp-blackjack-form select,
 .xp-minigame-form input,
 .xp-minigame-form select {
-  min-height: 40px;
+  min-height: 44px;
   border: 1px solid #c7cfd9;
-  border-radius: 12px;
-  padding: 0 12px;
-  background: linear-gradient(180deg, #ffffff, #f7f9fc);
+  border-radius: 14px;
+  padding: 0 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
@@ -6822,10 +6888,10 @@ body {
 
 .xp-game-select-btn {
   width: 100%;
-  min-height: 40px;
-  padding: 0 12px;
-  border: 1px solid #c5d1e0;
-  border-radius: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid #c9d1da;
+  border-radius: 14px;
   background: rgba(255, 255, 255, 0.96);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
   display: flex;
@@ -6855,7 +6921,7 @@ body {
   gap: 2px;
   padding: 4px;
   border: 1px solid #c7cfd9;
-  border-radius: 10px;
+  border-radius: 14px;
   background: rgba(252, 253, 255, 0.98);
   box-shadow: 0 12px 20px rgba(31, 56, 92, 0.14);
   max-height: 220px;
@@ -6888,7 +6954,24 @@ body {
 .xp-minigame-form select:focus {
   outline: none;
   border-color: #9aa6b5;
-  box-shadow: 0 0 0 2px rgba(154, 166, 181, 0.12);
+  box-shadow: 0 0 0 3px rgba(154, 166, 181, 0.12);
+}
+
+.xp-blackjack-primary {
+  width: 100%;
+  min-height: 44px;
+  border-radius: 14px;
+  border: 1px solid rgba(79, 90, 104, 0.88);
+  background: linear-gradient(180deg, rgba(76, 88, 103, 0.96), rgba(52, 62, 75, 0.96));
+  color: #f6f8fb;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.xp-blackjack-primary:hover {
+  background: linear-gradient(180deg, rgba(82, 95, 110, 0.98), rgba(57, 68, 82, 0.98));
+  border-color: rgba(73, 84, 98, 0.96);
 }
 
 .xp-blackjack-form select,
