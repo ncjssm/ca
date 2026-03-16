@@ -733,6 +733,7 @@ export default function App() {
   const [blackjackWalletProviderId, setBlackjackWalletProviderId] = useState("");
   const [walletPickerOpen, setWalletPickerOpen] = useState(false);
   const [walletPickerMode, setWalletPickerMode] = useState("connect");
+  const [gameSelectMenu, setGameSelectMenu] = useState(null);
   const [miniGameHubOpen, setMiniGameHubOpen] = useState(false);
   const [miniGameMatch, setMiniGameMatch] = useState(null);
   const [miniGameInvite, setMiniGameInvite] = useState({
@@ -2872,6 +2873,15 @@ export default function App() {
     setMentionMenu(null);
     setMentionIndex(0);
   }, [selectedChat?.type, selectedChat?.id]);
+
+  useEffect(() => {
+    if (!gameSelectMenu) return undefined;
+    function handleClose() {
+      setGameSelectMenu(null);
+    }
+    window.addEventListener("click", handleClose);
+    return () => window.removeEventListener("click", handleClose);
+  }, [gameSelectMenu]);
 
   useEffect(() => {
     const injected = listInjectedWallets();
@@ -6645,6 +6655,18 @@ export default function App() {
   const miniGameSelectedType = miniGameMatch?.game_type || miniGameInvite.gameType || "coinflip";
   const miniGameGameLabel =
     miniGameSelectedType === "bigbank" ? "Big Bank Small Bank" : "Coinflip";
+  const blackjackFriendOptions = friends.map((friend) => ({
+    value: String(friend.id),
+    label: `@${friend.username}`,
+  }));
+  const blackjackTokenOptions = BLACKJACK_TOKENS.map((token) => ({
+    value: token,
+    label: token,
+  }));
+  const blackjackChainOptions = BLACKJACK_CHAINS.map((chain) => ({
+    value: chain.id,
+    label: chain.label,
+  }));
   const walletOptions = useMemo(() => {
     const injected = listInjectedWallets();
     const options = [...injected];
@@ -6654,6 +6676,43 @@ export default function App() {
     return options;
   }, []);
   const selectedWalletOption = walletOptions.find((option) => option.id === blackjackWalletProviderId) || null;
+  const renderGameSelect = ({ menuId, label, value, options, onChange, placeholder = "Select" }) => {
+    const selected = options.find((option) => String(option.value) === String(value)) || null;
+    const open = gameSelectMenu === menuId;
+    return (
+      <div className="xp-game-select">
+        <div className="xp-game-select-label">{label}</div>
+        <button
+          type="button"
+          className="xp-game-select-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            setGameSelectMenu((prev) => (prev === menuId ? null : menuId));
+          }}
+        >
+          <span>{selected?.label || placeholder}</span>
+          <span className="xp-caret">&#9662;</span>
+        </button>
+        {open && (
+          <div className="xp-game-select-menu" onClick={(e) => e.stopPropagation()}>
+            {options.map((option) => (
+              <button
+                key={`${menuId}:${option.value}`}
+                type="button"
+                className={`xp-game-select-item ${String(option.value) === String(value) ? "active" : ""}`}
+                onClick={() => {
+                  onChange(option.value);
+                  setGameSelectMenu(null);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
   const renderGameAudioStrip = (mode = "casino") => (
     <div className="xp-game-audio-strip">
       <div className="xp-game-audio-meta">
@@ -11026,22 +11085,14 @@ export default function App() {
                       Create a 1v1 table inside your call. Set how much each player risks, then choose the token and network.
                     </div>
                   <div className="xp-blackjack-form">
-                      <label>
-                        Friend
-                        <select
-                          value={String(blackjackInvite.targetId || blackjackTargetId || "")}
-                          onChange={(e) =>
-                            setBlackjackInvite((prev) => ({ ...prev, targetId: e.target.value }))
-                          }
-                        >
-                          <option value="">Select a friend</option>
-                          {friends.map((friend) => (
-                            <option key={friend.id} value={friend.id}>
-                              @{friend.username}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      {renderGameSelect({
+                        menuId: "blackjack-friend",
+                        label: "Friend",
+                        value: String(blackjackInvite.targetId || blackjackTargetId || ""),
+                        options: blackjackFriendOptions,
+                        onChange: (next) => setBlackjackInvite((prev) => ({ ...prev, targetId: next })),
+                        placeholder: "Select a friend",
+                      })}
                       <label>
                         Wager
                         <input
@@ -11058,35 +11109,23 @@ export default function App() {
                         <small>Each player deposits this same amount.</small>
                       </label>
                       <label>
-                        Token
-                        <select
-                          value={blackjackInvite.token}
-                          onChange={(e) =>
-                            setBlackjackInvite((prev) => ({ ...prev, token: e.target.value }))
-                          }
-                        >
-                          {BLACKJACK_TOKENS.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
+                        {renderGameSelect({
+                          menuId: "blackjack-token",
+                          label: "Token",
+                          value: blackjackInvite.token,
+                          options: blackjackTokenOptions,
+                          onChange: (next) => setBlackjackInvite((prev) => ({ ...prev, token: next })),
+                        })}
                         <small>What both players will deposit and win in.</small>
                       </label>
                       <label>
-                        Chain
-                        <select
-                          value={blackjackInvite.chain}
-                          onChange={(e) =>
-                            setBlackjackInvite((prev) => ({ ...prev, chain: e.target.value }))
-                          }
-                        >
-                          {BLACKJACK_CHAINS.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.label}
-                            </option>
-                          ))}
-                        </select>
+                        {renderGameSelect({
+                          menuId: "blackjack-chain",
+                          label: "Chain",
+                          value: blackjackInvite.chain,
+                          options: blackjackChainOptions,
+                          onChange: (next) => setBlackjackInvite((prev) => ({ ...prev, chain: next })),
+                        })}
                         <small>{formatGameTokenLabel(blackjackInvite.token)} on {formatGameChainLabel(blackjackInvite.chain)}.</small>
                       </label>
                     </div>
@@ -11390,22 +11429,14 @@ export default function App() {
                         : "Set the opening wager, send the invite, then both players secretly lock their amount before the round resolves."}
                     </div>
                     <div className="xp-minigame-form">
-                      <label>
-                        Friend
-                        <select
-                          value={String(miniGameInvite.targetId || miniGameTargetId || "")}
-                          onChange={(e) =>
-                            setMiniGameInvite((prev) => ({ ...prev, targetId: e.target.value }))
-                          }
-                        >
-                          <option value="">Select a friend</option>
-                          {friends.map((friend) => (
-                            <option key={friend.id} value={friend.id}>
-                              @{friend.username}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                      {renderGameSelect({
+                        menuId: "minigame-friend",
+                        label: "Friend",
+                        value: String(miniGameInvite.targetId || miniGameTargetId || ""),
+                        options: blackjackFriendOptions,
+                        onChange: (next) => setMiniGameInvite((prev) => ({ ...prev, targetId: next })),
+                        placeholder: "Select a friend",
+                      })}
                       <label>
                         Wager
                         <input
@@ -11426,35 +11457,23 @@ export default function App() {
                         </small>
                       </label>
                       <label>
-                        Token
-                        <select
-                          value={miniGameInvite.token}
-                          onChange={(e) =>
-                            setMiniGameInvite((prev) => ({ ...prev, token: e.target.value }))
-                          }
-                        >
-                          {BLACKJACK_TOKENS.map((t) => (
-                            <option key={t} value={t}>
-                              {t}
-                            </option>
-                          ))}
-                        </select>
+                        {renderGameSelect({
+                          menuId: "minigame-token",
+                          label: "Token",
+                          value: miniGameInvite.token,
+                          options: blackjackTokenOptions,
+                          onChange: (next) => setMiniGameInvite((prev) => ({ ...prev, token: next })),
+                        })}
                         <small>What the pot will be held and paid out in.</small>
                       </label>
                       <label>
-                        Chain
-                        <select
-                          value={miniGameInvite.chain}
-                          onChange={(e) =>
-                            setMiniGameInvite((prev) => ({ ...prev, chain: e.target.value }))
-                          }
-                        >
-                          {BLACKJACK_CHAINS.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.label}
-                            </option>
-                          ))}
-                        </select>
+                        {renderGameSelect({
+                          menuId: "minigame-chain",
+                          label: "Chain",
+                          value: miniGameInvite.chain,
+                          options: blackjackChainOptions,
+                          onChange: (next) => setMiniGameInvite((prev) => ({ ...prev, chain: next })),
+                        })}
                         <small>{formatGameTokenLabel(miniGameInvite.token)} on {formatGameChainLabel(miniGameInvite.chain)}.</small>
                       </label>
                     </div>

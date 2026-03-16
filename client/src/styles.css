@@ -6756,7 +6756,9 @@ body {
   gap: 10px;
 }
 
-.xp-blackjack-form label {
+.xp-blackjack-form label,
+.xp-minigame-form label,
+.xp-game-select {
   display: grid;
   gap: 6px;
   font-size: 12px;
@@ -6788,6 +6790,77 @@ body {
   background: linear-gradient(180deg, #ffffff, #f4f8ff);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.xp-game-select {
+  position: relative;
+}
+
+.xp-game-select-label {
+  font-size: 12px;
+  color: #24406b;
+  font-weight: 600;
+}
+
+.xp-game-select-btn {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid #c9d5e8;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff, #f4f8ff);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #223b64;
+}
+
+.xp-game-select-btn:hover {
+  border-color: #5f88d9;
+}
+
+.xp-game-select-btn:focus {
+  outline: none;
+  border-color: #5f88d9;
+  box-shadow: 0 0 0 3px rgba(95, 136, 217, 0.16);
+}
+
+.xp-game-select-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 2200;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid #c9d5e8;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(236, 244, 255, 0.98));
+  box-shadow: 0 16px 28px rgba(31, 56, 92, 0.18);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.xp-game-select-item {
+  text-align: left;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffffff, #eef5ff);
+  color: #24406b;
+}
+
+.xp-game-select-item:hover {
+  border-color: #7da1e3;
+  background: linear-gradient(180deg, #f8fbff, #e6f0ff);
+}
+
+.xp-game-select-item.active {
+  border-color: #5f88d9;
+  background: linear-gradient(180deg, #dfeaff, #cae0ff);
 }
 
 .xp-blackjack-form input:focus,
