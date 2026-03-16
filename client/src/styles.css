@@ -6716,7 +6716,8 @@ body {
   position: absolute;
   inset: 0;
   background: url("/desktop/blackjack.png") center / cover no-repeat;
-  opacity: 0.09;
+  opacity: 0.035;
+  filter: saturate(0.75) blur(0.2px);
   pointer-events: none;
 }
 
@@ -6779,7 +6780,7 @@ body {
   display: grid;
   gap: 6px;
   font-size: 12px;
-  color: #24406b;
+  color: var(--xp-text);
   font-weight: 600;
 }
 
@@ -6792,7 +6793,7 @@ body {
 .xp-minigame-form small {
   font-size: 11px;
   line-height: 1.35;
-  color: #667892;
+  color: var(--xp-muted);
   font-weight: 500;
 }
 
@@ -6801,11 +6802,11 @@ body {
 .xp-minigame-form input,
 .xp-minigame-form select {
   min-height: 40px;
-  border: 1px solid #c9d5e8;
+  border: 1px solid #c7cfd9;
   border-radius: 12px;
   padding: 0 12px;
-  background: linear-gradient(180deg, #ffffff, #f4f8ff);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  background: linear-gradient(180deg, #ffffff, #f7f9fc);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
   transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
@@ -6815,7 +6816,7 @@ body {
 
 .xp-game-select-label {
   font-size: 12px;
-  color: #24406b;
+  color: var(--xp-text);
   font-weight: 600;
 }
 
@@ -6825,23 +6826,23 @@ body {
   padding: 0 12px;
   border: 1px solid #c5d1e0;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.96);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.62);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  color: #2a3f60;
+  color: var(--xp-text);
 }
 
 .xp-game-select-btn:hover {
-  border-color: #98aac3;
+  border-color: #a6b0bc;
 }
 
 .xp-game-select-btn:focus {
   outline: none;
-  border-color: #8ea3c2;
-  box-shadow: 0 0 0 2px rgba(142, 163, 194, 0.14);
+  border-color: #9aa6b5;
+  box-shadow: 0 0 0 2px rgba(154, 166, 181, 0.12);
 }
 
 .xp-game-select-menu {
@@ -6853,7 +6854,7 @@ body {
   display: grid;
   gap: 2px;
   padding: 4px;
-  border: 1px solid #c5d1e0;
+  border: 1px solid #c7cfd9;
   border-radius: 10px;
   background: rgba(252, 253, 255, 0.98);
   box-shadow: 0 12px 20px rgba(31, 56, 92, 0.14);
@@ -6867,18 +6868,18 @@ body {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: #314764;
+  color: var(--xp-text);
 }
 
 .xp-game-select-item:hover {
   border-color: #d3dce8;
-  background: rgba(234, 241, 249, 0.86);
+  background: rgba(239, 242, 246, 0.94);
 }
 
 .xp-game-select-item.active {
   border-color: #bfcddd;
-  background: rgba(221, 231, 243, 0.94);
-  color: #223653;
+  background: rgba(229, 234, 240, 0.96);
+  color: var(--xp-text);
 }
 
 .xp-blackjack-form input:focus,
@@ -6886,8 +6887,8 @@ body {
 .xp-minigame-form input:focus,
 .xp-minigame-form select:focus {
   outline: none;
-  border-color: #5f88d9;
-  box-shadow: 0 0 0 3px rgba(95, 136, 217, 0.16);
+  border-color: #9aa6b5;
+  box-shadow: 0 0 0 2px rgba(154, 166, 181, 0.12);
 }
 
 .xp-blackjack-form select,
