@@ -183,7 +183,7 @@ async function apiFetch(path, options = {}) {
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || "Request failed");
+    throw new Error(data.error || `Request failed (${res.status})`);
   }
   return res.json();
 }
@@ -386,6 +386,27 @@ function getAudioStatusIcon(type) {
       <path d="M5 11a7 7 0 0 0 14 0" fill="none" stroke="currentColor" strokeWidth="2" />
       <path d="M12 18v3" fill="none" stroke="currentColor" strokeWidth="2" />
       <path d="M4 4l16 16" fill="none" stroke="currentColor" strokeWidth="2" />
+    </svg>
+  );
+}
+
+function getScreenShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M9 19h6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 16v3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function getEndCallIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+      <path
+        d="M6.8 14.4a12.7 12.7 0 0 1 10.4 0l1.3.6a1.1 1.1 0 0 1 .6 1.4l-.8 2a1.1 1.1 0 0 1-1.4.6l-2.5-1a1.2 1.2 0 0 0-1 .1l-1 .6a1.1 1.1 0 0 1-1.1 0l-1-.6a1.2 1.2 0 0 0-1-.1l-2.5 1a1.1 1.1 0 0 1-1.4-.6l-.8-2a1.1 1.1 0 0 1 .6-1.4z"
+        fill="currentColor"
+      />
     </svg>
   );
 }
@@ -902,6 +923,7 @@ export default function App() {
   const [callInputMenuOpen, setCallInputMenuOpen] = useState(false);
   const [callOutputMenuOpen, setCallOutputMenuOpen] = useState(false);
   const [callWindowPos, setCallWindowPos] = useState({ x: 0, y: 0 });
+  const [screenShareWindowPos, setScreenShareWindowPos] = useState({ x: 0, y: 0 });
   const [callQuality, setCallQuality] = useState({ label: "Good", level: "good" });
   const [inputSensitivity, setInputSensitivity] = useState(0.5);
   const [echoCancel, setEchoCancel] = useState(true);
@@ -969,7 +991,12 @@ export default function App() {
   const [groupShares, setGroupShares] = useState({});
   const [dmShareStream, setDmShareStream] = useState(null);
   const [groupCallVisible, setGroupCallVisible] = useState(true);
-  const [screenShareWindow, setScreenShareWindow] = useState({ open: false, label: "" });
+  const [screenShareWindow, setScreenShareWindow] = useState({
+    open: false,
+    label: "",
+    minimized: false,
+    maximized: false,
+  });
   const [screenShareError, setScreenShareError] = useState("");
   const [dmShareActive, setDmShareActive] = useState(false);
   const [gameAudioMuted, setGameAudioMuted] = useState(false);
@@ -987,7 +1014,9 @@ export default function App() {
   const audioTickRef = useRef({});
   const lastStoryViewedRef = useRef(null);
   const callDragRef = useRef({ dragging: false, startX: 0, startY: 0, x: 0, y: 0, pendingX: 0, pendingY: 0 });
+  const shareDragRef = useRef({ dragging: false, startX: 0, startY: 0, x: 0, y: 0, pendingX: 0, pendingY: 0 });
   const callDragRafRef = useRef(null);
+  const shareDragRafRef = useRef(null);
   const callEndedRef = useRef(false);
   const callSoundCtxRef = useRef(null);
 
@@ -1478,7 +1507,8 @@ export default function App() {
     socketRef.current = socket;
 
     socket.on("dm:new", (message) => {
-      const key = chatKey("dm", message.sender_id === user.id ? message.recipient_id : message.sender_id);
+      const otherUserId = message.sender_id === user.id ? message.recipient_id : message.sender_id;
+      const key = chatKey("dm", otherUserId);
       setMessagesByChat((prev) => {
         const list = prev[key] || [];
         const pendingIndex = message.sender_id === user.id ? matchPending(list, message) : -1;
@@ -1490,6 +1520,7 @@ export default function App() {
         return { ...prev, [key]: mergeMessages(list, message) };
       });
       if (message.sender_id !== user.id) {
+        reopenDM(otherUserId).catch(() => {});
         if (!isChatMutedValue(key)) {
           markChatUnread(key);
         }
@@ -2430,7 +2461,7 @@ export default function App() {
     node.connect(gateGain);
     node = gateGain;
 
-    // higher-quality pitch shift using AudioWorklet (fallback to ScriptProcessor)
+    // granular pitch shift keeps the live mic stable without the old resample artifacts
     if (voiceEffect === "pitch" && safePitch !== 0) {
       const rate = Math.pow(2, safePitch / 12);
       const useWorklet = !!ctx.audioWorklet && ctx.state === "running";
@@ -2445,7 +2476,41 @@ export default function App() {
               }
               constructor() {
                 super();
-                this.phase = 0;
+                this.bufferSize = 16384;
+                this.buffer = new Float32Array(this.bufferSize);
+                this.writeIndex = 0;
+                this.grainSize = 2048;
+                this.overlap = this.grainSize / 2;
+                this.delay = 3072;
+                this.grains = [
+                  { pos: 0, age: 0 },
+                  { pos: 0, age: this.overlap },
+                ];
+                this.resetGrain(0, 0);
+                this.resetGrain(1, this.overlap);
+              }
+              wrap(value) {
+                const size = this.bufferSize;
+                let next = value % size;
+                if (next < 0) next += size;
+                return next;
+              }
+              readSample(pos) {
+                const i0 = Math.floor(pos);
+                const i1 = (i0 + 1) % this.bufferSize;
+                const frac = pos - i0;
+                const s0 = this.buffer[i0] || 0;
+                const s1 = this.buffer[i1] || 0;
+                return s0 * (1 - frac) + s1 * frac;
+              }
+              window(age) {
+                const phase = age / this.grainSize;
+                return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+              }
+              resetGrain(index, age = 0) {
+                const grain = this.grains[index];
+                grain.age = age;
+                grain.pos = this.wrap(this.writeIndex - this.delay - age);
               }
               process(inputs, outputs, parameters) {
                 const input = inputs[0];
@@ -2454,21 +2519,24 @@ export default function App() {
                 const rateArr = parameters.rate;
                 const rate = rateArr.length ? rateArr[0] : 1.0;
                 const inL = input[0] || new Float32Array(output[0].length);
-                const inR = input[1] || inL;
                 const outL = output[0];
                 const outR = output[1] || output[0];
                 const len = outL.length;
                 for (let i = 0; i < len; i++) {
-                  const idx = Math.floor(this.phase) % inL.length;
-                  const idx2 = (idx + 1) % inL.length;
-                  const frac = this.phase - Math.floor(this.phase);
-                  const s0 = inL[idx] || 0;
-                  const s1 = inL[idx2] || 0;
-                  const sample = s0 * (1 - frac) + s1 * frac;
+                  this.buffer[this.writeIndex] = inL[i] || 0;
+                  let sample = 0;
+                  for (let g = 0; g < this.grains.length; g++) {
+                    const grain = this.grains[g];
+                    sample += this.readSample(grain.pos) * this.window(grain.age);
+                    grain.pos = this.wrap(grain.pos + rate);
+                    grain.age += 1;
+                    if (grain.age >= this.grainSize) {
+                      this.resetGrain(g, 0);
+                    }
+                  }
                   outL[i] = sample;
                   outR[i] = sample;
-                  this.phase += rate;
-                  if (this.phase >= inL.length) this.phase -= inL.length;
+                  this.writeIndex = (this.writeIndex + 1) % this.bufferSize;
                 }
                 return true;
               }
@@ -2500,22 +2568,56 @@ export default function App() {
         }
       }
       if (!pitchApplied) {
-        const shifter = ctx.createScriptProcessor(2048, 2, 2);
-        let phase = 0;
+        const shifter = ctx.createScriptProcessor(2048, 1, 2);
+        const bufferSize = 16384;
+        const ring = new Float32Array(bufferSize);
+        let writeIndex = 0;
+        const grainSize = 2048;
+        const delay = 3072;
+        const wrap = (value) => {
+          let next = value % bufferSize;
+          if (next < 0) next += bufferSize;
+          return next;
+        };
+        const readSample = (pos) => {
+          const i0 = Math.floor(pos);
+          const i1 = (i0 + 1) % bufferSize;
+          const frac = pos - i0;
+          const s0 = ring[i0] || 0;
+          const s1 = ring[i1] || 0;
+          return s0 * (1 - frac) + s1 * frac;
+        };
+        const windowAt = (age) => {
+          const phase = age / grainSize;
+          return 0.5 - 0.5 * Math.cos(phase * Math.PI * 2);
+        };
+        const grains = [
+          { pos: wrap(-delay), age: 0 },
+          { pos: wrap(-delay - grainSize / 2), age: grainSize / 2 },
+        ];
+        const resetGrain = (grain) => {
+          grain.age = 0;
+          grain.pos = wrap(writeIndex - delay);
+        };
         shifter.onaudioprocess = (e) => {
           const inputL = e.inputBuffer.getChannelData(0);
           const outputL = e.outputBuffer.getChannelData(0);
-          const inputR = e.inputBuffer.numberOfChannels > 1 ? e.inputBuffer.getChannelData(1) : inputL;
           const outputR = e.outputBuffer.getChannelData(1);
           const len = inputL.length;
           for (let i = 0; i < len; i++) {
-            const idx = Math.floor(phase);
-            const idx2 = (idx + 1) % len;
-            const frac = phase - idx;
-            outputL[i] = inputL[idx] * (1 - frac) + inputL[idx2] * frac;
-            outputR[i] = inputR[idx] * (1 - frac) + inputR[idx2] * frac;
-            phase += rate;
-            if (phase >= len) phase -= len;
+            ring[writeIndex] = inputL[i] || 0;
+            let sample = 0;
+            for (const grain of grains) {
+              sample += readSample(grain.pos) * windowAt(grain.age);
+              grain.pos = wrap(grain.pos + rate);
+              grain.age += 1;
+              if (grain.age >= grainSize) {
+                resetGrain(grain);
+              }
+            }
+            outputL[i] = sample;
+            outputR[i] = sample;
+            writeIndex = (writeIndex + 1) % bufferSize;
           }
         };
         node.connect(shifter);
@@ -2675,7 +2777,7 @@ export default function App() {
   useEffect(() => {
     if (!screenShareWindow.open) return;
     if (!groupLocalScreenRef.current && !dmLocalScreenRef.current && screenShareEntries.length === 0) {
-      setScreenShareWindow((prev) => ({ ...prev, open: false }));
+      closeScreenShareWindow();
     }
   }, [screenShareEntries, screenShareWindow.open]);
 
@@ -3400,11 +3502,7 @@ export default function App() {
           friends.find((f) => f.id === otherId) ||
           manualDmUsers.find((f) => f.id === otherId) ||
           null;
-        setScreenShareWindow((prev) => ({
-          ...prev,
-          open: true,
-          label: other ? `Sharing: @${other.username}` : "Screen Share",
-        }));
+        openScreenShareWindow(other ? `Sharing: @${other.username}` : "Screen Share");
         event.track.onended = () => {
           setDmShareStream(null);
         };
@@ -3595,6 +3693,63 @@ export default function App() {
     callDragRef.current.dragging = false;
     window.removeEventListener("mousemove", onCallDragMove);
     window.removeEventListener("mouseup", stopCallDrag);
+  }
+
+  function startShareWindowDrag(e) {
+    if (screenShareWindow.maximized) return;
+    e.preventDefault();
+    shareDragRef.current.dragging = true;
+    shareDragRef.current.startX = e.clientX;
+    shareDragRef.current.startY = e.clientY;
+    shareDragRef.current.x = screenShareWindowPos.x;
+    shareDragRef.current.y = screenShareWindowPos.y;
+    window.addEventListener("mousemove", onShareWindowDragMove);
+    window.addEventListener("mouseup", stopShareWindowDrag);
+  }
+
+  function onShareWindowDragMove(e) {
+    if (!shareDragRef.current.dragging) return;
+    const dx = e.clientX - shareDragRef.current.startX;
+    const dy = e.clientY - shareDragRef.current.startY;
+    shareDragRef.current.pendingX = shareDragRef.current.x + dx;
+    shareDragRef.current.pendingY = shareDragRef.current.y + dy;
+    if (!shareDragRafRef.current) {
+      shareDragRafRef.current = requestAnimationFrame(() => {
+        setScreenShareWindowPos({
+          x: shareDragRef.current.pendingX,
+          y: shareDragRef.current.pendingY,
+        });
+        shareDragRafRef.current = null;
+      });
+    }
+  }
+
+  function stopShareWindowDrag() {
+    shareDragRef.current.dragging = false;
+    window.removeEventListener("mousemove", onShareWindowDragMove);
+    window.removeEventListener("mouseup", stopShareWindowDrag);
+  }
+
+  function openScreenShareWindow(label) {
+    setScreenShareWindow((prev) => ({
+      open: true,
+      label: label || prev.label || "Screen Share",
+      minimized: false,
+      maximized: prev.maximized,
+    }));
+  }
+
+  function closeScreenShareWindow() {
+    setScreenShareWindow((prev) => ({ ...prev, open: false, minimized: false, maximized: false }));
+    setScreenShareWindowPos({ x: 0, y: 0 });
+  }
+
+  function toggleScreenShareWindowMinimized() {
+    setScreenShareWindow((prev) => ({ ...prev, minimized: !prev.minimized, maximized: prev.minimized ? prev.maximized : false }));
+  }
+
+  function toggleScreenShareWindowMaximized() {
+    setScreenShareWindow((prev) => ({ ...prev, maximized: !prev.maximized, minimized: false }));
   }
 
   async function createOffer(otherId) {
@@ -4046,7 +4201,7 @@ export default function App() {
         await entry.pc.setLocalDescription(offer);
         socketRef.current?.emit("group:call:offer", { groupId: groupCall.groupId, toId: peerId, offer });
       });
-      setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
+      openScreenShareWindow("Sharing: You");
       track.onended = () => stopGroupScreenShare();
     } catch {
       setScreenShareError("Screen share permission denied or unavailable.");
@@ -4056,7 +4211,7 @@ export default function App() {
   async function stopGroupScreenShare() {
     groupLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     groupLocalScreenRef.current = null;
-    setScreenShareWindow((prev) => ({ ...prev, open: false }));
+    closeScreenShareWindow();
     groupPeersRef.current.forEach(async (entry, peerId) => {
       if (!entry?.pc) return;
       const offer = await entry.pc.createOffer();
@@ -4095,7 +4250,7 @@ export default function App() {
         }
         dmScreenAudioSenderRef.current = sender;
       }
-      setScreenShareWindow((prev) => ({ ...prev, open: true, label: "Sharing: You" }));
+      openScreenShareWindow("Sharing: You");
       videoTrack.onended = () => stopDmScreenShare();
       if (pcRef.current) {
         await createOffer(callState.withUserId);
@@ -4117,7 +4272,7 @@ export default function App() {
     }
     dmScreenVideoSenderRef.current = null;
     dmScreenAudioSenderRef.current = null;
-    setScreenShareWindow((prev) => ({ ...prev, open: false }));
+    closeScreenShareWindow();
     if (callState.withUserId) {
       createOffer(callState.withUserId);
     }
@@ -4709,6 +4864,16 @@ export default function App() {
     }
   }
 
+  function findDmUserRow(userId) {
+    return (
+      friends.find((f) => Number(f.id) === Number(userId)) ||
+      friendsAll.find((f) => Number(f.id) === Number(userId)) ||
+      manualDmUsersRef.current.find((u) => Number(u.id) === Number(userId)) ||
+      allUsers.find((u) => Number(u.id) === Number(userId)) ||
+      null
+    );
+  }
+
   function closeDM(userId) {
     setDeletingDmId(userId);
     const hidden = getHiddenDms();
@@ -4727,6 +4892,8 @@ export default function App() {
   async function reopenDM(userId) {
     const hidden = getHiddenDms().filter((id) => id !== userId);
     localStorage.setItem(`xp-hidden-dms:${user?.id}`, JSON.stringify(hidden));
+    const userRow = findDmUserRow(userId);
+    if (userRow) ensureFriendCard(userRow);
     await loadChats();
   }
 
@@ -4745,7 +4912,12 @@ export default function App() {
       return;
     }
     const lower = value.toLowerCase();
-    const dmMatches = friends.filter(
+    const dmPool = [...friends];
+    [...friendsAll, ...manualDmUsersRef.current, ...allUsers].forEach((entry) => {
+      if (!entry?.id) return;
+      if (!dmPool.some((f) => Number(f.id) === Number(entry.id))) dmPool.push(entry);
+    });
+    const dmMatches = dmPool.filter(
       (f) =>
         f.username.toLowerCase().includes(lower) ||
         (f.display_name || "").toLowerCase().includes(lower)
@@ -10475,13 +10647,20 @@ export default function App() {
                   </svg>
                 </button>
               </div>
-              <button className="xp-button" onClick={dmShareActive ? stopDmScreenShare : startDmScreenShare}>
-                {dmShareActive ? "Stop Share" : "Share Screen"}
+              <button
+                className={`xp-button xp-icon-btn xp-call-action-btn ${dmShareActive ? "active" : ""}`}
+                onClick={dmShareActive ? stopDmScreenShare : startDmScreenShare}
+                title={dmShareActive ? "Stop screen share" : "Share screen"}
+              >
+                {getScreenShareIcon()}
               </button>
-              <button className="xp-button" onClick={() => setBlackjackPanelOpen(true)}>
-                Activities
+              <button
+                className="xp-button xp-icon-btn xp-call-end-btn"
+                onClick={endCall}
+                title="End call"
+              >
+                {getEndCallIcon()}
               </button>
-              <button className="xp-button" onClick={endCall}>End</button>
             </div>
             {callSettingsOpen && (
               <div className="xp-call-settings">
@@ -10655,13 +10834,21 @@ export default function App() {
                     {getAudioStatusIcon("deafened")}
                   </button>
                 </div>
-                <button className="xp-button" onClick={startGroupScreenShare}>Share Screen</button>
+                <button
+                  className={`xp-button xp-icon-btn xp-call-action-btn ${groupLocalScreenRef.current ? "active" : ""}`}
+                  onClick={groupLocalScreenRef.current ? stopGroupScreenShare : startGroupScreenShare}
+                  title={groupLocalScreenRef.current ? "Stop screen share" : "Share screen"}
+                >
+                  {getScreenShareIcon()}
+                </button>
                 <button className="xp-button xp-icon-btn" type="button" onClick={() => setCallSettingsOpen((p) => !p)}>
                   <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
                     <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2" />
                   </svg>
                 </button>
-                <button className="xp-button" onClick={leaveGroupCall}>Leave</button>
+                <button className="xp-button xp-icon-btn xp-call-end-btn" onClick={leaveGroupCall} title="Leave call">
+                  {getEndCallIcon()}
+                </button>
               </div>
             )}
             {callSettingsOpen && (
@@ -10856,27 +11043,48 @@ export default function App() {
       )}
 
       {screenShareWindow.open && (
-        <div className="xp-call-window">
-          <div className="xp-call-window-title">
+        <div
+          className={`xp-call-window ${screenShareWindow.maximized ? "maximized" : ""} ${screenShareWindow.minimized ? "minimized" : ""}`}
+          style={
+            screenShareWindow.maximized
+              ? undefined
+              : { transform: `translate(${screenShareWindowPos.x}px, ${screenShareWindowPos.y}px)` }
+          }
+        >
+          <div className="xp-call-window-title xp-call-drag" onMouseDown={startShareWindowDrag}>
             {screenShareWindow.label || "Screen Share"}
             <div className="xp-call-window-actions">
-              <button className="xp-button" onClick={() => setScreenShareWindow((prev) => ({ ...prev, open: false }))}>x</button>
+              <button className="xp-button" type="button" onClick={toggleScreenShareWindowMinimized} title={screenShareWindow.minimized ? "Restore" : "Minimize"}>
+                _
+              </button>
+              <button className="xp-button" type="button" onClick={toggleScreenShareWindowMaximized} title={screenShareWindow.maximized ? "Restore down" : "Maximize"}>
+                {screenShareWindow.maximized ? "❐" : "□"}
+              </button>
+              <button className="xp-button" type="button" onClick={closeScreenShareWindow} title="Close">x</button>
             </div>
           </div>
-          <div className="xp-call-window-body">
-            {groupLocalScreenRef.current && (
-              <StreamVideo stream={groupLocalScreenRef.current} muted />
-            )}
-            {dmLocalScreenRef.current && (
-              <StreamVideo stream={dmLocalScreenRef.current} muted />
-            )}
-            {screenShareEntries.map((entry) => (
-              <div key={entry.id} className="xp-share-tile">
-                <div className="xp-share-label">{entry.name}</div>
-                <StreamVideo stream={entry.stream} muted />
-              </div>
-            ))}
-          </div>
+          {!screenShareWindow.minimized && (
+            <div className="xp-call-window-body">
+              {groupLocalScreenRef.current && (
+                <div className="xp-share-tile">
+                  <div className="xp-share-label">You</div>
+                  <StreamVideo stream={groupLocalScreenRef.current} muted />
+                </div>
+              )}
+              {dmLocalScreenRef.current && (
+                <div className="xp-share-tile">
+                  <div className="xp-share-label">You</div>
+                  <StreamVideo stream={dmLocalScreenRef.current} muted />
+                </div>
+              )}
+              {screenShareEntries.map((entry) => (
+                <div key={entry.id} className="xp-share-tile">
+                  <div className="xp-share-label">{entry.name}</div>
+                  <StreamVideo stream={entry.stream} muted />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -11436,15 +11644,31 @@ export default function App() {
             </div>
             <div className="xp-modal-body">
               {!miniGameMatch && (
-                <div className="xp-minigame-setup">
-                  <div className="xp-minigame-card">
-                    <div className="xp-minigame-title">Invite to {miniGameGameLabel}</div>
-                    <div className="xp-minigame-sub">
+                <div className="xp-blackjack-setup xp-game-setup">
+                  <div className="xp-blackjack-setup-card">
+                    <div className="xp-blackjack-setup-meta">
+                      <span className="xp-blackjack-kicker">{miniGameGameLabel}</span>
+                      <span className="xp-blackjack-kicker muted">Private Match</span>
+                    </div>
+                    <div className="xp-blackjack-title">Invite to {miniGameGameLabel}</div>
+                    <div className="xp-blackjack-sub">
                       {miniGameSelectedType === "coinflip"
                         ? "Set the wager, send the invite, then both players match the same deposit before the flip."
                         : "Set the opening wager, send the invite, then both players secretly lock their amount before the round resolves."}
                     </div>
-                    <div className="xp-minigame-form">
+                    <div className="xp-blackjack-summary">
+                      <div className="xp-blackjack-summary-item">
+                        <span>Wager</span>
+                        <strong>
+                          {Number(miniGameInvite.wager || 0) > 0 ? String(miniGameInvite.wager) : "0"} {miniGameInvite.token}
+                        </strong>
+                      </div>
+                      <div className="xp-blackjack-summary-item">
+                        <span>Network</span>
+                        <strong>{formatGameChainLabel(miniGameInvite.chain)}</strong>
+                      </div>
+                    </div>
+                    <div className="xp-blackjack-form xp-minigame-form">
                       {renderGameSelect({
                         menuId: "minigame-friend",
                         label: "Friend",
@@ -11494,7 +11718,7 @@ export default function App() {
                       </label>
                     </div>
                     <button
-                      className="xp-button"
+                      className="xp-button xp-blackjack-primary"
                       onClick={() => sendMiniGameInvite(miniGameTargetId)}
                       disabled={!miniGameTargetId || miniGameBusy}
                     >
