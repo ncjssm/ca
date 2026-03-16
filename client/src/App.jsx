@@ -16,12 +16,7 @@ import websiteIcon from "./assets/connections/website.png";
 import xIcon from "./assets/connections/x.png";
 import youtubeIcon from "./assets/connections/youtube.png";
 
-const DEFAULT_REMOTE_API = "https://spirited-achievement-production-0db7.up.railway.app";
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  (typeof window !== "undefined" && /netlify\.app$/i.test(window.location.hostname)
-    ? DEFAULT_REMOTE_API
-    : window.location.origin || "http://localhost:3001");
+const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
 const CHAIN_MODE = import.meta.env.VITE_CHAIN_MODE || "mock";
 const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "";
 const GAME_LOOP_URL = `${API_URL}/bet.mp3`;
@@ -11087,7 +11082,7 @@ export default function App() {
                   <div className="xp-blackjack-setup-card">
                     <div className="xp-blackjack-title">Invite a friend</div>
                     <div className="xp-blackjack-sub">
-                      Create a 1v1 table inside your call. Set how much each player risks, then choose the token and network.
+                      Create a 1v1 table. Set how much each player risks, then choose the token and network.
                     </div>
                   <div className="xp-blackjack-form">
                       {renderGameSelect({
