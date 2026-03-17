@@ -2796,6 +2796,41 @@ body {
   justify-content: center;
 }
 
+.xp-story-user-chip {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.42);
+  color: #ffffff;
+  backdrop-filter: blur(8px);
+}
+
+.xp-story-user-chip img {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  object-fit: cover;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.xp-story-user-name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.xp-story-user-sub {
+  font-size: 11px;
+  opacity: 0.84;
+}
+
 .xp-story-tapzones {
   position: absolute;
   inset: 0;
@@ -2866,12 +2901,76 @@ body {
   margin-top: 8px;
 }
 
+.xp-story-reply-bar {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(151, 169, 194, 0.48);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(246, 249, 252, 0.82));
+}
+
+.xp-story-reply-bar input {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid rgba(143, 160, 187, 0.64);
+  border-radius: 999px;
+  padding: 0 14px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.xp-story-send,
+.xp-story-forward {
+  min-width: 40px;
+  height: 40px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
 .story-viewers-overlay {
   z-index: 30;
 }
 
 .xp-story-viewers-modal {
   width: min(320px, 90vw);
+}
+
+.xp-story-share-modal {
+  width: min(420px, 92vw);
+}
+
+.xp-story-share-body {
+  display: grid;
+  gap: 12px;
+}
+
+.xp-story-share-list {
+  display: grid;
+  gap: 8px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.xp-story-share-item {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--xp-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.xp-story-share-item img {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  object-fit: cover;
+  border: 1px solid rgba(23, 50, 99, 0.16);
 }
 
 .xp-story-viewers-list {
@@ -3921,8 +4020,8 @@ body {
   box-shadow: 0 18px 40px rgba(11, 18, 30, 0.32);
   display: flex;
   flex-direction: column;
-  min-width: 300px;
-  width: min(520px, calc(100vw - 96px));
+  min-width: 360px;
+  width: min(860px, calc(100vw - 96px));
   overflow: hidden;
 }
 
@@ -3937,14 +4036,15 @@ body {
 
 .xp-call-window.minimized {
   height: auto !important;
-  width: 260px;
+  width: 280px;
 }
 
 .xp-call-window-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 10px;
+  gap: 10px;
+  padding: 8px 12px;
   background: linear-gradient(var(--xp-blue), var(--xp-blue-dark));
   color: #ffffff;
   font-size: 12px;
@@ -3954,13 +4054,26 @@ body {
 .xp-call-window-actions {
   display: inline-flex;
   gap: 4px;
+  align-items: center;
 }
 
 .xp-call-window-actions .xp-button {
-  width: 24px;
-  height: 20px;
+  width: 26px;
+  height: 22px;
   padding: 0;
   min-width: 0;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.xp-call-window-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+  line-height: 1;
+  transform: translateY(-1px);
 }
 
 .xp-call-controls .xp-button {
@@ -3975,13 +4088,12 @@ body {
 
 .xp-call-window-body {
   padding: 10px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 10px;
   background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(239,244,252,0.98));
   flex: 1;
   min-height: 0;
-  max-height: min(70vh, 720px);
+  max-height: min(62vh, 620px);
   overflow: auto;
 }
 
@@ -4001,14 +4113,26 @@ body {
 
 .xp-share-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
+  gap: 12px;
 }
 
 .xp-share-tile {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 6px;
+  align-content: start;
+  padding: 8px;
+  border: 1px solid rgba(104, 126, 159, 0.22);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(249, 251, 255, 0.98), rgba(236, 242, 250, 0.94));
+}
+
+.xp-share-tile .xp-call-window-video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  max-height: min(40vh, 360px);
 }
 
 .xp-call-banner {
@@ -4574,6 +4698,53 @@ body {
   max-height: 240px;
   border: 1px solid var(--xp-border);
   background: #ffffff;
+}
+
+.xp-story-message-card {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: min(280px, 100%);
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid rgba(145, 160, 182, 0.55);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 247, 252, 0.94));
+  text-align: left;
+}
+
+.xp-story-message-media {
+  width: 84px;
+  height: 108px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(23, 50, 99, 0.15);
+  background: #eef2f8;
+}
+
+.xp-story-message-media img,
+.xp-story-message-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.xp-story-message-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.xp-story-message-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--xp-text);
+}
+
+.xp-story-message-cta {
+  font-size: 11px;
+  color: var(--xp-muted);
 }
 
 .xp-audio-shell {
@@ -6780,8 +6951,8 @@ body {
   position: absolute;
   inset: 0;
   background: url("/desktop/blackjack.png") center center / cover no-repeat;
-  opacity: 0.52;
-  filter: saturate(0.98) contrast(1.04);
+  opacity: 0.76;
+  filter: saturate(1.04) contrast(1.08);
   pointer-events: none;
 }
 
@@ -6790,8 +6961,8 @@ body {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(90deg, rgba(248, 250, 253, 0.26), rgba(248, 250, 253, 0.1) 28%, rgba(248, 250, 253, 0.18) 100%),
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.06) 48%, rgba(255, 255, 255, 0.22));
+    linear-gradient(90deg, rgba(248, 250, 253, 0.1), rgba(248, 250, 253, 0.03) 28%, rgba(248, 250, 253, 0.09) 100%),
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02) 48%, rgba(255, 255, 255, 0.12));
   pointer-events: none;
 }
 
@@ -6804,7 +6975,7 @@ body {
   border: 1px solid rgba(173, 182, 194, 0.72);
   border-radius: 16px;
   padding: 22px 22px 18px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 250, 252, 0.78));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(248, 250, 252, 0.68));
   backdrop-filter: blur(5px);
   width: 100%;
   max-width: 430px;
@@ -7071,6 +7242,18 @@ body {
   word-break: break-all;
 }
 
+.xp-blackjack-address-block {
+  display: grid;
+  gap: 12px;
+  margin: 12px 0 10px;
+}
+
+.xp-blackjack-address-actions {
+  display: flex;
+  gap: 10px;
+  padding-top: 2px;
+}
+
 .xp-blackjack-timer {
   font-size: 12px;
   color: var(--xp-muted);
@@ -7087,6 +7270,13 @@ body {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.xp-blackjack-dev-tools {
+  display: grid;
+  gap: 6px;
+  align-items: start;
+  align-self: end;
 }
 
 .xp-blackjack-deposit-row {
@@ -7127,11 +7317,25 @@ body {
   color: #2a9d3f;
 }
 
+.xp-blackjack-qr {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border-radius: 16px;
+  border: 3px solid color-mix(in srgb, var(--xp-border-dark) 78%, white 22%);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--xp-panel) 88%, white 12%), color-mix(in srgb, var(--xp-panel-alt, var(--xp-panel)) 92%, white 8%));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 8px 22px rgba(34, 48, 70, 0.14);
+}
+
 .xp-blackjack-qr img {
   width: 160px;
   height: 160px;
   border-radius: 10px;
-  border: 1px solid var(--xp-border);
+  border: 3px solid color-mix(in srgb, var(--xp-border) 80%, white 20%);
   background: #ffffff;
 }
 
@@ -7301,46 +7505,24 @@ body {
 }
 
 .xp-wallet-modal {
-  width: min(420px, 92vw);
+  width: min(460px, 92vw);
 }
 
 .xp-game-audio-strip {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  justify-content: flex-end;
   margin-bottom: 14px;
-  border: 1px solid rgba(18, 42, 86, 0.14);
-  border-radius: 14px;
-  background:
-    linear-gradient(135deg, rgba(255, 247, 221, 0.92), rgba(246, 232, 184, 0.74)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(241, 246, 255, 0.9));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-}
-
-.xp-game-audio-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.xp-game-audio-title {
-  font-weight: 700;
-  color: #173263;
-}
-
-.xp-game-audio-sub {
-  font-size: 11px;
-  color: #5d6e84;
 }
 
 .xp-game-audio-toggle {
-  min-width: 74px;
+  min-width: 96px;
+  padding-inline: 18px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(229, 235, 245, 0.96));
 }
 
 .xp-game-audio-toggle.muted {
-  opacity: 0.8;
+  opacity: 0.82;
 }
 
 .xp-minigame-modal {
@@ -7348,7 +7530,12 @@ body {
 }
 
 .xp-game-setup::before {
-  opacity: 0.3;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 34%),
+    radial-gradient(circle at 82% 22%, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0) 30%),
+    linear-gradient(135deg, rgba(188, 201, 223, 0.26), rgba(222, 231, 244, 0.16) 42%, rgba(244, 247, 252, 0.08));
+  opacity: 1;
+  filter: none;
 }
 
 @media (max-width: 900px) {
@@ -7360,7 +7547,7 @@ body {
   .xp-blackjack-setup::before,
   .xp-blackjack-setup::after,
   .xp-game-setup::before {
-    opacity: 0.22;
+    opacity: 1;
   }
 
   .xp-blackjack-setup-card {
@@ -7532,6 +7719,13 @@ body {
   flex: 1;
 }
 
+.xp-minigame-action-row .xp-blackjack-dev-tools {
+  min-height: 100%;
+  justify-content: flex-end;
+  padding-bottom: 0;
+  margin-top: 4px;
+}
+
 .xp-coinflip-stage {
   display: flex;
   flex-direction: column;
@@ -7556,6 +7750,35 @@ body {
 .xp-bigbank-stage,
 .xp-bigbank-bars {
   width: 100%;
+}
+
+.xp-minigame-reveal-stage {
+  min-height: 170px;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+}
+
+.xp-minigame-reveal-orb {
+  width: 112px;
+  height: 112px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 32% 30%, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.18) 36%, rgba(90, 125, 173, 0.16) 72%),
+    linear-gradient(145deg, rgba(248, 250, 255, 0.94), rgba(225, 232, 243, 0.9));
+  border: 1px solid rgba(143, 160, 187, 0.62);
+  box-shadow:
+    0 16px 34px rgba(48, 69, 102, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  animation: xp-minigame-reveal-pulse 1s ease-in-out infinite;
+}
+
+.xp-minigame-reveal-orb span {
+  font-size: 42px;
+  font-weight: 800;
+  color: #243444;
 }
 
 .xp-bigbank-bars {
@@ -7609,36 +7832,99 @@ body {
   }
 }
 
+@keyframes xp-minigame-reveal-pulse {
+  0%,
+  100% {
+    transform: scale(0.96);
+    box-shadow:
+      0 16px 34px rgba(48, 69, 102, 0.14),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  50% {
+    transform: scale(1);
+    box-shadow:
+      0 20px 42px rgba(48, 69, 102, 0.18),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  }
+}
+
 .xp-wallet-picker {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .xp-wallet-option {
   width: 100%;
   text-align: left;
-  border: 1px solid var(--xp-border);
-  border-radius: 10px;
-  padding: 12px;
-  background: linear-gradient(180deg, #ffffff, #e7eef9);
+  border: 1px solid rgba(73, 97, 46, 0.24);
+  border-radius: 16px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 247, 251, 0.94)),
+    linear-gradient(135deg, rgba(112, 139, 63, 0.06), rgba(40, 56, 84, 0.02));
   cursor: pointer;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+}
+
+.xp-wallet-option:hover {
+  border-color: rgba(73, 97, 46, 0.4);
+  box-shadow: 0 10px 22px rgba(29, 36, 45, 0.08);
+  transform: translateY(-1px);
+}
+
+.xp-wallet-option.active {
+  border-color: rgba(73, 97, 46, 0.62);
+  box-shadow:
+    0 0 0 1px rgba(73, 97, 46, 0.18),
+    0 12px 26px rgba(29, 36, 45, 0.1);
+}
+
+.xp-wallet-option-iconwrap {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(235, 241, 247, 0.96));
+  border: 1px solid rgba(89, 106, 124, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+.xp-wallet-option-icon {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+
+.xp-wallet-option-fallback {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #223246;
+  background: linear-gradient(180deg, rgba(228, 236, 244, 0.98), rgba(212, 221, 232, 0.96));
+}
+
+.xp-wallet-option-copy {
+  min-width: 0;
   display: grid;
   gap: 4px;
 }
 
-.xp-wallet-option.active {
-  border-color: var(--xp-blue);
-  box-shadow: 0 0 0 2px rgba(47, 102, 199, 0.18);
-}
-
 .xp-wallet-option-title {
   font-weight: 700;
-  color: var(--xp-text);
+  color: #223246;
 }
 
 .xp-wallet-option-sub {
   font-size: 11px;
-  color: var(--xp-muted);
+  color: #657487;
 }
 
 @keyframes xp-deal-card {
@@ -8222,6 +8508,19 @@ body {
   .xp-call-window-actions .xp-button {
     width: 22px;
     height: 20px;
+  }
+
+  .xp-call-window-body {
+    max-height: none;
+    padding: 8px;
+  }
+
+  .xp-share-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .xp-share-tile .xp-call-window-video {
+    max-height: 30vh;
   }
 
   .xp-group-call-button {

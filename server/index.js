@@ -521,8 +521,27 @@ function saveMiniGameMatch(match) {
   );
 }
 
-function sanitizeMiniGameMatch(match) {
+function shouldHideBigBankAmounts(match) {
+  return (
+    match?.game_type === "bigbank" &&
+    match?.status !== "ended" &&
+    match?.status !== "settled" &&
+    match?.status !== "refunded"
+  );
+}
+
+function sanitizeMiniGameMatch(match, viewerUserId = null) {
   if (!match) return null;
+  const hideAmounts = shouldHideBigBankAmounts(match);
+  const players = (match.players || []).map((player) => {
+    if (!hideAmounts) return player;
+    if (viewerUserId && player.user_id === viewerUserId) return player;
+    return {
+      ...player,
+      deposit_amount: 0,
+      deposited_amount: 0,
+    };
+  });
   return {
     id: match.id,
     game_type: match.game_type,
@@ -537,7 +556,7 @@ function sanitizeMiniGameMatch(match) {
     escrow_address: match.escrow_address,
     invite_deadline: match.invite_deadline,
     deposit_deadline: match.deposit_deadline,
-    players: match.players || [],
+    players,
     state: match.state || null,
     winner_id: match.winner_id,
     settlement_tx: match.settlement_tx,
@@ -548,9 +567,9 @@ function sanitizeMiniGameMatch(match) {
 }
 
 function emitMiniGameUpdate(match) {
-  const payload = sanitizeMiniGameMatch(match);
-  if (!payload) return;
   (match.players || []).forEach((p) => {
+    const payload = sanitizeMiniGameMatch(match, p.user_id);
+    if (!payload) return;
     io.to(`user:${p.user_id}`).emit("minigame:state", payload);
   });
 }
@@ -702,13 +721,49 @@ function resolveMiniGameWinner(match) {
   return match;
 }
 
+function beginMiniGameReveal(match) {
+  match.status = "revealing";
+  match.state = {
+    ...(match.state || {}),
+    revealEndsAt: new Date(Date.now() + 10 * 1000).toISOString(),
+  };
+  return match;
+}
+
+async function finalizeMiniGameAfterReveal(match) {
+  if (!match || match.game_type !== "bigbank" || match.status !== "revealing") return match;
+  if (!isExpiredIso(match.state?.revealEndsAt)) return match;
+  match.status = "ended";
+  resolveMiniGameWinner(match);
+  if (!match.winner_id && match.game_type === "bigbank") {
+    if (CHAIN_MODE === "evm") {
+      await refundMiniGameOnchainMatch(match);
+    }
+    match.status = "refunded";
+    match.state = { ...(match.state || {}), result: "tie" };
+  } else {
+    if (CHAIN_MODE === "evm") {
+      await finalizeMiniGameOnchainMatch(match);
+    }
+    maybeNotifyMiniGameWinner(match);
+  }
+  return match;
+}
+
 function maybeNotifyMiniGameWinner(match) {
   if (!match?.winner_id) return;
+  const winner = getOne("SELECT username FROM users WHERE id = ?", [match.winner_id]);
+  const pot = (match.players || []).reduce(
+    (sum, player) => sum + Number(player.deposited_amount || player.deposit_amount || 0),
+    0
+  );
   const payload = JSON.stringify({
     matchId: match.id,
     gameType: match.game_type,
     chain: match.chain,
     token: match.token,
+    pot,
+    winnerUsername: winner?.username || "winner",
   });
   const existing = getOne(
     "SELECT id FROM notifications WHERE user_id = ? AND type = 'minigame_claim' AND ref_id = ?",
@@ -719,7 +774,7 @@ function maybeNotifyMiniGameWinner(match) {
       "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'minigame_claim', ?, ?, 'minigame', ?, ?)",
       [
         match.winner_id,
-        `You won ${match.game_type === "bigbank" ? "Big Bank Small Bank" : "Coinflip"}. Claim your winnings.`,
+        `@${winner?.username || "winner"} has won ${pot.toFixed(2)} ${match.token}.`,
         match.inviter_id,
         match.id,
         payload,
@@ -1405,7 +1460,7 @@ function expireUsernameTransfers() {
 function getLastMessageBetween(userId, otherId) {
   return getOne(
     `
-      SELECT id, sender_id, recipient_id, body, type, image_url, audio_url, forwarded_from_id, forwarded_from_username, forwarded_from_display, created_at, edited_at
+      SELECT id, sender_id, recipient_id, body, type, image_url, audio_url, story_id, story_owner_id, story_media_url, story_media_type, forwarded_from_id, forwarded_from_username, forwarded_from_display, created_at, edited_at
       FROM messages
       WHERE (sender_id = ? AND recipient_id = ?)
          OR (sender_id = ? AND recipient_id = ?)
@@ -1792,6 +1847,45 @@ app.get("/api/stories/:id/viewers", requireAuth, (req, res) => {
   res.json({ viewers: rows });
 });
 
+app.get("/api/stories/item/:id", requireAuth, (req, res) => {
+  const storyId = Number(req.params.id);
+  if (!storyId) {
+    return res.status(400).json({ error: "Invalid story" });
+  }
+  const row = getOne(
+    `
+      SELECT s.id, s.user_id, s.media_url, s.media_type, s.created_at, s.expires_at,
+             u.username, u.display_name, u.avatar, u.status, u.last_seen
+      FROM stories s
+      JOIN users u ON u.id = s.user_id
+      WHERE s.id = ?
+        AND datetime(s.expires_at) > datetime('now')
+    `,
+    [storyId]
+  );
+  if (!row) {
+    return res.status(404).json({ error: "Story not found" });
+  }
+  res.json({
+    story: {
+      id: row.id,
+      user_id: row.user_id,
+      media_url: row.media_url,
+      media_type: row.media_type,
+      created_at: row.created_at,
+      expires_at: row.expires_at,
+      user: {
+        id: row.user_id,
+        username: row.username,
+        display_name: row.display_name,
+        avatar: row.avatar,
+        status: onlineUsers.get(row.user_id) || row.status,
+        last_seen: row.last_seen,
+      },
+    },
+  });
+});
+
 app.delete("/api/stories/:id", requireAuth, (req, res) => {
   const storyId = Number(req.params.id);
   if (!storyId) {
@@ -1943,7 +2037,7 @@ app.get("/api/messages/:userId", requireAuth, (req, res) => {
   const otherId = Number(req.params.userId);
   const rows = getAll(
     `
-      SELECT id, sender_id, recipient_id, body, type, image_url, audio_url, forwarded_from_id, forwarded_from_username, forwarded_from_display, created_at, edited_at, deleted_at
+      SELECT id, sender_id, recipient_id, body, type, image_url, audio_url, story_id, story_owner_id, story_media_url, story_media_type, forwarded_from_id, forwarded_from_username, forwarded_from_display, created_at, edited_at, deleted_at
       FROM messages
       WHERE ((sender_id = ? AND recipient_id = ?)
          OR (sender_id = ? AND recipient_id = ?))
@@ -3019,7 +3113,7 @@ app.post("/api/minigames/:id/accept", requireAuth, (req, res) => {
   player.status = "accepted";
   if ((match.players || []).every((p) => p.status === "accepted")) {
     match.status = "deposit";
-    match.deposit_deadline = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    match.deposit_deadline = new Date(Date.now() + 2 * 60 * 1000).toISOString();
     match.state = {
       ...(match.state || {}),
       countdownEndsAt: match.deposit_deadline,
@@ -3029,7 +3123,7 @@ app.post("/api/minigames/:id/accept", requireAuth, (req, res) => {
   }
   saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/decline", requireAuth, (req, res) => {
@@ -3051,11 +3145,15 @@ app.get("/api/minigames/:id", requireAuth, (req, res) => {
   if (!player) return res.status(403).json({ error: "Not a participant" });
   Promise.resolve()
     .then(async () => {
-      if (CHAIN_MODE === "evm" && (match.status === "deposit" || match.status === "ended" || match.status === "settled")) {
+      if (CHAIN_MODE === "evm" && (match.status === "deposit" || match.status === "revealing" || match.status === "ended" || match.status === "settled")) {
         await syncMiniGameOnchainState(match);
-        saveMiniGameMatch(match);
       }
-      res.json({ match: sanitizeMiniGameMatch(match) });
+      if (match.status === "revealing") {
+        await finalizeMiniGameAfterReveal(match);
+      }
+      saveMiniGameMatch(match);
+      emitMiniGameUpdate(match);
+      res.json({ match: sanitizeMiniGameMatch(match, req.session.userId) });
     })
     .catch((err) => {
       res.status(500).json({ error: formatEvmError(err, "Unable to load game") });
@@ -3089,7 +3187,7 @@ app.post("/api/minigames/:id/wallet", requireAuth, async (req, res) => {
   }
   saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/deposit/mock", requireAuth, async (req, res) => {
@@ -3109,18 +3207,17 @@ app.post("/api/minigames/:id/deposit/mock", requireAuth, async (req, res) => {
   player.status = "deposited";
   const allDeposited = (match.players || []).every((p) => p.status === "deposited");
   if (allDeposited) {
-    match.status = "ended";
-    resolveMiniGameWinner(match);
-    if (!match.winner_id && match.game_type === "bigbank") {
-      match.status = "refunded";
-      match.state = { ...(match.state || {}), result: "tie" };
+    if (match.game_type === "bigbank") {
+      beginMiniGameReveal(match);
     } else {
+      match.status = "ended";
+      resolveMiniGameWinner(match);
       maybeNotifyMiniGameWinner(match);
     }
   }
   saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/sync", requireAuth, async (req, res) => {
@@ -3133,24 +3230,29 @@ app.post("/api/minigames/:id/sync", requireAuth, async (req, res) => {
       await syncMiniGameOnchainState(match);
       const allDeposited = (match.players || []).every((p) => Number(p.deposited_amount || 0) > 0);
       if (match.status === "deposit" && allDeposited) {
-        match.status = "ended";
-        resolveMiniGameWinner(match);
-        if (!match.winner_id && match.game_type === "bigbank") {
-          await refundMiniGameOnchainMatch(match);
-          match.status = "refunded";
-          match.state = { ...(match.state || {}), result: "tie" };
+        if (match.game_type === "bigbank") {
+          beginMiniGameReveal(match);
         } else {
+          match.status = "ended";
+          resolveMiniGameWinner(match);
           await finalizeMiniGameOnchainMatch(match);
           maybeNotifyMiniGameWinner(match);
         }
       }
-      saveMiniGameMatch(match);
     } catch (err) {
       return res.status(500).json({ error: formatEvmError(err, "Unable to sync game escrow") });
     }
   }
+  if (match.status === "revealing") {
+    try {
+      await finalizeMiniGameAfterReveal(match);
+    } catch (err) {
+      return res.status(500).json({ error: formatEvmError(err, "Unable to finalize reveal") });
+    }
+  }
+  saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/claim", requireAuth, async (req, res) => {
@@ -3185,7 +3287,7 @@ app.post("/api/minigames/:id/claim", requireAuth, async (req, res) => {
   match.status = "settled";
   saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/deposit", requireAuth, (req, res) => {
@@ -3207,18 +3309,17 @@ app.post("/api/minigames/:id/deposit", requireAuth, (req, res) => {
   player.status = "deposited";
   const allDeposited = (match.players || []).every((p) => p.status === "deposited");
   if (allDeposited) {
-    match.status = "ended";
-    resolveMiniGameWinner(match);
-    if (!match.winner_id && match.game_type === "bigbank") {
-      match.status = "refunded";
-      match.state = { ...(match.state || {}), result: "tie" };
+    if (match.game_type === "bigbank") {
+      beginMiniGameReveal(match);
     } else {
+      match.status = "ended";
+      resolveMiniGameWinner(match);
       maybeNotifyMiniGameWinner(match);
     }
   }
   saveMiniGameMatch(match);
   emitMiniGameUpdate(match);
-  res.json({ ok: true, match: sanitizeMiniGameMatch(match) });
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/blackjack/invite", requireAuth, (req, res) => {
@@ -3317,7 +3418,7 @@ app.post("/api/blackjack/:id/accept", requireAuth, (req, res) => {
   const allAccepted = (match.players || []).every((p) => p.status === "accepted");
   if (allAccepted && match.status === "invited") {
     match.status = "deposit";
-    match.deposit_deadline = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    match.deposit_deadline = new Date(Date.now() + 2 * 60 * 1000).toISOString();
     if (CHAIN_MODE === "mock") {
       match.escrow_address = createMockEscrowAddress();
     }
@@ -3471,17 +3572,19 @@ app.post("/api/blackjack/:id/action", requireAuth, async (req, res) => {
       }
     }
     if (match.winner_id) {
+      const winner = getOne("SELECT username FROM users WHERE id = ?", [match.winner_id]);
       const payload = JSON.stringify({
         matchId: match.id,
         chain: match.chain,
         token: match.token,
         pot: match.wager_amount * (match.players?.length || 2),
+        winnerUsername: winner?.username || "winner",
       });
       run(
         "INSERT INTO notifications (user_id, type, message, from_user_id, context, ref_id, payload) VALUES (?, 'blackjack_claim', ?, ?, 'blackjack', ?, ?)",
         [
           match.winner_id,
-          "You won the Blackjack match. Claim your winnings.",
+          `@${winner?.username || "winner"} has won ${(match.wager_amount * (match.players?.length || 2)).toFixed(2)} ${match.token}.`,
           match.inviter_id,
           match.id,
           payload,
@@ -4076,11 +4179,20 @@ io.on("connection", (socket) => {
   });
 
   socket.on("dm:send", (payload) => {
-    const { toId, body, type, imageUrl, audioUrl, forwardedFrom } = payload || {};
+    const { toId, body, type, imageUrl, audioUrl, forwardedFrom, story } = payload || {};
     if (!toId) {
       return;
     }
-    const cleanType = type === "image" ? "image" : type === "audio" ? "audio" : "text";
+    const cleanType =
+      type === "image"
+        ? "image"
+        : type === "audio"
+        ? "audio"
+        : type === "story_reply"
+        ? "story_reply"
+        : type === "story_share"
+        ? "story_share"
+        : "text";
     const cleanBody = (body || "").trim();
     if (cleanType === "image" && !imageUrl) {
       return;
@@ -4088,15 +4200,25 @@ io.on("connection", (socket) => {
     if (cleanType === "audio" && !audioUrl) {
       return;
     }
+    if ((cleanType === "story_reply" || cleanType === "story_share") && !story?.id) {
+      return;
+    }
     if (cleanType === "text" && !cleanBody) {
       return;
     }
+    if (cleanType === "story_reply" && !cleanBody) {
+      return;
+    }
+    const storyId = story?.id ? Number(story.id) : null;
+    const storyOwnerId = story?.ownerId ? Number(story.ownerId) : null;
+    const storyMediaUrl = story?.mediaUrl || null;
+    const storyMediaType = story?.mediaType || null;
     const fId = forwardedFrom?.id || null;
     const fUsername = forwardedFrom?.username || null;
     const fDisplay = forwardedFrom?.displayName || null;
     const info = run(
-      "INSERT INTO messages (sender_id, recipient_id, body, type, image_url, audio_url, forwarded_from_id, forwarded_from_username, forwarded_from_display) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [userId, toId, cleanBody.slice(0, 2000), cleanType, imageUrl || null, audioUrl || null, fId, fUsername, fDisplay]
+      "INSERT INTO messages (sender_id, recipient_id, body, type, image_url, audio_url, story_id, story_owner_id, story_media_url, story_media_type, forwarded_from_id, forwarded_from_username, forwarded_from_display) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [userId, toId, cleanBody.slice(0, 2000), cleanType, imageUrl || null, audioUrl || null, storyId, storyOwnerId, storyMediaUrl, storyMediaType, fId, fUsername, fDisplay]
     );
     const message = {
       id: info.lastInsertRowid,
@@ -4106,6 +4228,10 @@ io.on("connection", (socket) => {
       type: cleanType,
       image_url: imageUrl || null,
       audio_url: audioUrl || null,
+      story_id: storyId,
+      story_owner_id: storyOwnerId,
+      story_media_url: storyMediaUrl,
+      story_media_type: storyMediaType,
       forwarded_from_id: fId,
       forwarded_from_username: fUsername,
       forwarded_from_display: fDisplay,

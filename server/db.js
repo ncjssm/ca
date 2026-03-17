@@ -86,6 +86,10 @@ export async function initDb() {
       type TEXT NOT NULL DEFAULT 'text',
       image_url TEXT,
       audio_url TEXT,
+      story_id INTEGER,
+      story_owner_id INTEGER,
+      story_media_url TEXT,
+      story_media_type TEXT,
       forwarded_from_id INTEGER,
       forwarded_from_username TEXT,
       forwarded_from_display TEXT,
@@ -394,6 +398,22 @@ export async function initDb() {
   const hasMessageAudio = messageColumns.some((col) => col[1] === "audio_url");
   if (!hasMessageAudio) {
     db.exec("ALTER TABLE messages ADD COLUMN audio_url TEXT");
+  }
+  const hasMessageStoryId = messageColumns.some((col) => col[1] === "story_id");
+  if (!hasMessageStoryId) {
+    db.exec("ALTER TABLE messages ADD COLUMN story_id INTEGER");
+  }
+  const hasMessageStoryOwnerId = messageColumns.some((col) => col[1] === "story_owner_id");
+  if (!hasMessageStoryOwnerId) {
+    db.exec("ALTER TABLE messages ADD COLUMN story_owner_id INTEGER");
+  }
+  const hasMessageStoryMediaUrl = messageColumns.some((col) => col[1] === "story_media_url");
+  if (!hasMessageStoryMediaUrl) {
+    db.exec("ALTER TABLE messages ADD COLUMN story_media_url TEXT");
+  }
+  const hasMessageStoryMediaType = messageColumns.some((col) => col[1] === "story_media_type");
+  if (!hasMessageStoryMediaType) {
+    db.exec("ALTER TABLE messages ADD COLUMN story_media_type TEXT");
   }
   const hasForwardedFromId = messageColumns.some((col) => col[1] === "forwarded_from_id");
   if (!hasForwardedFromId) {

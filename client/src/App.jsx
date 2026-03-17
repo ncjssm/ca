@@ -5,6 +5,9 @@ import addIcon from "./assets/add.svg";
 import bellIcon from "./assets/bell.svg";
 import pendingIcon from "./assets/pending.svg";
 import removeIcon from "./assets/remove.svg";
+import metamaskWalletIcon from "./assets/wallets/metamask.png";
+import phantomWalletIcon from "./assets/wallets/phantom.png";
+import trustWalletIcon from "./assets/wallets/trust.png";
 import discordIcon from "./assets/connections/discord.png";
 import githubIcon from "./assets/connections/github.png";
 import instagramIcon from "./assets/connections/instagram.png";
@@ -19,8 +22,8 @@ import youtubeIcon from "./assets/connections/youtube.png";
 const API_URL = import.meta.env.VITE_API_URL || window.location.origin || "http://localhost:3001";
 const CHAIN_MODE = import.meta.env.VITE_CHAIN_MODE || "mock";
 const WALLETCONNECT_PROJECT_ID = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "";
-const GAME_LOOP_URL = `${API_URL}/bet.mp3`;
-const COINFLIP_SFX_URL = `${API_URL}/coinflip.mp3`;
+const GAME_LOOP_URL = "/bet.mp3";
+const COINFLIP_SFX_URL = "/coinflip.mp3";
 const BLACKJACK_FACTORY_ABI = [
   "function deposit(bytes32 matchId) external",
   "function claim(bytes32 matchId,address recipient) external",
@@ -225,12 +228,18 @@ function listInjectedWallets() {
   const root = window.ethereum;
   const providerList = Array.isArray(root?.providers) ? root.providers : root ? [root] : [];
   providerList.forEach((provider) => {
-    if (provider?.isMetaMask) pushProvider(provider, "metamask", "MetaMask");
-    if (provider?.isRabby) pushProvider(provider, "rabby", "Rabby");
-    if (provider?.isCoinbaseWallet) pushProvider(provider, "coinbase", "Coinbase Wallet");
-    if (provider?.isExodus) pushProvider(provider, "exodus", "Exodus");
-    if (provider?.isPhantom) pushProvider(provider, "phantom-evm", "Phantom");
-    if (provider?.isTrust || provider?.isTrustWallet) pushProvider(provider, "trust", "Trust Wallet");
+    const isTrust = !!(provider?.isTrust || provider?.isTrustWallet);
+    const isPhantom = !!provider?.isPhantom;
+    const isCoinbase = !!provider?.isCoinbaseWallet;
+    const isExodus = !!provider?.isExodus;
+    const isRabby = !!provider?.isRabby;
+    const isMetaMask = !!provider?.isMetaMask && !isTrust && !isPhantom && !isCoinbase && !isExodus && !isRabby;
+    if (isMetaMask) pushProvider(provider, "metamask", "MetaMask");
+    if (isRabby) pushProvider(provider, "rabby", "Rabby");
+    if (isCoinbase) pushProvider(provider, "coinbase", "Coinbase Wallet");
+    if (isExodus) pushProvider(provider, "exodus", "Exodus");
+    if (isPhantom) pushProvider(provider, "phantom-evm", "Phantom");
+    if (isTrust) pushProvider(provider, "trust", "Trust Wallet");
   });
   if (window.phantom?.ethereum) {
     pushProvider(window.phantom.ethereum, "phantom-evm", "Phantom");
@@ -468,6 +477,8 @@ function getLastMessagePreview(message, selfId, otherLabel, isGroup = false) {
   const prefix = isSelf ? "You: " : label ? `${label}: ` : isGroup ? `${label}: ` : "";
   if (message.type === "image" || message.image_url) return `${prefix}Photo`;
   if (message.type === "audio" || message.audio_url) return `${prefix}Voice message`;
+  if (message.type === "story_reply") return `${prefix}Replied to a story`;
+  if (message.type === "story_share") return `${prefix}Shared a story`;
   const text = (message.body || "").trim();
   if (!text) return "";
   const max = 18;
@@ -557,6 +568,10 @@ function isAudioType(type) {
   return type === "audio";
 }
 
+function isStoryMessageType(type) {
+  return type === "story_reply" || type === "story_share";
+}
+
 function getDisplayName(user) {
   if (!user) return "";
   return (user.display_name || "").trim() || user.username;
@@ -613,7 +628,8 @@ function matchPending(prev, message) {
       m.type === message.type &&
       (m.body || "") === (message.body || "") &&
       (m.image_url || "") === (message.image_url || "") &&
-      (m.audio_url || "") === (message.audio_url || "")
+      (m.audio_url || "") === (message.audio_url || "") &&
+      Number(m.story_id || 0) === Number(message.story_id || 0)
   );
 }
 
@@ -621,6 +637,8 @@ function getMessagePreview(msg) {
   if (!msg) return "";
   if (msg.type === "image") return "Photo";
   if (msg.type === "audio") return "Voice message";
+  if (msg.type === "story_reply") return "Replied to your story";
+  if (msg.type === "story_share") return "Shared a story";
   const text = (msg.body || "").trim();
   if (!text) return "";
   const max = 18;
@@ -672,6 +690,8 @@ export default function App() {
   const [manualDmUsers, setManualDmUsers] = useState([]);
   const manualDmUsersRef = useRef([]);
   const [mutedChats, setMutedChats] = useState({});
+  const mutedChatsRef = useRef({});
+  const messageAlertAudioCtxRef = useRef(null);
   const [nicknameMap, setNicknameMap] = useState({});
   const [nicknameModal, setNicknameModal] = useState(null);
   const [friendMuteMenu, setFriendMuteMenu] = useState(null);
@@ -696,6 +716,7 @@ export default function App() {
   const [friendSuccess, setFriendSuccess] = useState("");
   const [addFriendOpen, setAddFriendOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [notificationNow, setNotificationNow] = useState(() => Date.now());
   const [showNotifications, setShowNotifications] = useState(false);
   const [showChatProfile, setShowChatProfile] = useState(false);
   const [showMutualGroups, setShowMutualGroups] = useState(false);
@@ -750,6 +771,7 @@ export default function App() {
   const [blackjackUiMessage, setBlackjackUiMessage] = useState("");
   const [blackjackClaimOpen, setBlackjackClaimOpen] = useState(false);
   const [blackjackClaimAddress, setBlackjackClaimAddress] = useState("");
+  const [blackjackClaimNotificationId, setBlackjackClaimNotificationId] = useState(null);
   const [blackjackWallet, setBlackjackWallet] = useState("");
   const [blackjackWalletProviderId, setBlackjackWalletProviderId] = useState("");
   const [walletPickerOpen, setWalletPickerOpen] = useState(false);
@@ -769,7 +791,10 @@ export default function App() {
   const [miniGameDepositAmount, setMiniGameDepositAmount] = useState("10");
   const [miniGameClaimOpen, setMiniGameClaimOpen] = useState(false);
   const [miniGameClaimAddress, setMiniGameClaimAddress] = useState("");
+  const [miniGameClaimNotificationId, setMiniGameClaimNotificationId] = useState(null);
   const [miniGameUiMessage, setMiniGameUiMessage] = useState("");
+  const [gameUiNow, setGameUiNow] = useState(() => Date.now());
+  const miniGameRevealSyncRef = useRef(false);
 
   const [theme, setTheme] = useState("classic");
   const [customThemeMedia, setCustomThemeMedia] = useState(null);
@@ -897,6 +922,10 @@ export default function App() {
   const [storyDeleteConfirm, setStoryDeleteConfirm] = useState(false);
   const [storyViewersOpen, setStoryViewersOpen] = useState(false);
   const [storyViewers, setStoryViewers] = useState([]);
+  const [storyReplyInput, setStoryReplyInput] = useState("");
+  const [storyReplyBusy, setStoryReplyBusy] = useState(false);
+  const [storyShareOpen, setStoryShareOpen] = useState(false);
+  const [storyShareSearch, setStoryShareSearch] = useState("");
   const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const [groupNameInput, setGroupNameInput] = useState("");
   const [groupSelected, setGroupSelected] = useState({});
@@ -1158,6 +1187,28 @@ export default function App() {
     }, 40);
   }
 
+  function stopGameAudioPlayback() {
+    if (gameMusicFadeRef.current) {
+      clearInterval(gameMusicFadeRef.current);
+      gameMusicFadeRef.current = null;
+    }
+    const gameMusic = gameMusicAudioRef.current;
+    if (gameMusic) {
+      gameMusic.pause();
+      gameMusic.currentTime = 0;
+      gameMusic.volume = 0;
+    }
+    const coinflipAudio = coinflipSfxAudioRef.current;
+    if (coinflipAudio) {
+      coinflipAudio.pause();
+      coinflipAudio.currentTime = 0;
+    }
+    const blackjackCtx = blackjackSfxCtxRef.current;
+    if (blackjackCtx?.state === "running") {
+      blackjackCtx.suspend().catch(() => {});
+    }
+  }
+
   function playBlackjackTone({
     type = "sine",
     start = 520,
@@ -1313,6 +1364,10 @@ export default function App() {
   const groupLocalStreamRef = useRef(null);
   const groupLocalScreenRef = useRef(null);
   const dmLocalScreenRef = useRef(null);
+  const makingOfferRef = useRef(false);
+  const negotiationQueuedRef = useRef(false);
+  const pendingIceCandidatesRef = useRef([]);
+  const groupPeerSignalStateRef = useRef(new Map());
 
   useEffect(() => {
     callStateRef.current = callState;
@@ -1521,8 +1576,9 @@ export default function App() {
       });
       if (message.sender_id !== user.id) {
         reopenDM(otherUserId).catch(() => {});
-        if (!isChatMutedValue(key)) {
+        if (!isChatMutedLive(key)) {
           markChatUnread(key);
+          playMessageAlert();
         }
       }
       loadChats();
@@ -1654,8 +1710,9 @@ export default function App() {
         return { ...prev, [key]: mergeMessages(list, message) };
       });
       if (message.sender_id !== user.id) {
-        if (!isChatMutedValue(key)) {
+        if (!isChatMutedLive(key)) {
           markChatUnread(key);
+          playMessageAlert();
         }
       }
       loadChats();
@@ -1754,7 +1811,8 @@ export default function App() {
     socket.on("call:offer", async ({ fromId, offer }) => {
       await ensurePeer(fromId);
       if (!pcRef.current) return;
-      if (pcRef.current.signalingState !== "stable") {
+      const offerCollision = makingOfferRef.current || pcRef.current.signalingState !== "stable";
+      if (offerCollision) {
         try {
           await pcRef.current.setLocalDescription({ type: "rollback" });
         } catch {
@@ -1763,6 +1821,7 @@ export default function App() {
       }
       try {
         await pcRef.current.setRemoteDescription(offer);
+        await flushPendingIceCandidates(pcRef.current, pendingIceCandidatesRef.current);
       } catch {
         return;
       }
@@ -1777,6 +1836,7 @@ export default function App() {
       if (pcRef.current.signalingState !== "have-local-offer") return;
       try {
         await pcRef.current.setRemoteDescription(answer);
+        await flushPendingIceCandidates(pcRef.current, pendingIceCandidatesRef.current);
       } catch {
         // ignore
       }
@@ -1800,11 +1860,7 @@ export default function App() {
 
     socket.on("call:ice", async ({ candidate }) => {
       if (!pcRef.current || !candidate) return;
-      try {
-        await pcRef.current.addIceCandidate(candidate);
-      } catch {
-        // ignore
-      }
+      await addIceCandidateOrQueue(pcRef.current, candidate, pendingIceCandidatesRef.current);
     });
 
     socket.on("call:rejoin", async ({ fromId }) => {
@@ -1916,7 +1972,9 @@ export default function App() {
       await setupGroupPeer(groupId, fromId);
       const pc = groupPeersRef.current.get(fromId)?.pc;
       if (!pc) return;
-      if (pc.signalingState !== "stable") {
+      const signalState = getGroupPeerSignalState(fromId);
+      const offerCollision = signalState.makingOffer || pc.signalingState !== "stable";
+      if (offerCollision) {
         try {
           await pc.setLocalDescription({ type: "rollback" });
         } catch {
@@ -1925,6 +1983,7 @@ export default function App() {
       }
       try {
         await pc.setRemoteDescription(offer);
+        await flushPendingIceCandidates(pc, signalState.pendingIceCandidates);
       } catch {
         return;
       }
@@ -1939,6 +1998,7 @@ export default function App() {
       if (pc.signalingState !== "have-local-offer") return;
       try {
         await pc.setRemoteDescription(answer);
+        await flushPendingIceCandidates(pc, getGroupPeerSignalState(fromId).pendingIceCandidates);
       } catch {
         // ignore
       }
@@ -1947,11 +2007,7 @@ export default function App() {
     socket.on("group:call:ice", async ({ fromId, candidate }) => {
       const pc = groupPeersRef.current.get(fromId)?.pc;
       if (!pc || !candidate) return;
-      try {
-        await pc.addIceCandidate(candidate);
-      } catch {
-        // ignore
-      }
+      await addIceCandidateOrQueue(pc, candidate, getGroupPeerSignalState(fromId).pendingIceCandidates);
     });
 
     return () => {
@@ -2357,15 +2413,16 @@ export default function App() {
   }, [groupCall.status, groupCall.participants, inputSensitivity, audioStreamTick, user?.id]);
 
   function getHiFiAudioConstraints(deviceId) {
+    const usingVoiceEffect = voiceEffect !== "none";
     return {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       sampleRate: 48000,
       channelCount: 1,
       sampleSize: 16,
-      echoCancellation: echoCancel,
-      noiseSuppression: echoCancel,
-      autoGainControl: echoCancel,
-      latency: { ideal: 0.01 },
+      echoCancellation: usingVoiceEffect ? false : echoCancel,
+      noiseSuppression: usingVoiceEffect ? false : echoCancel,
+      autoGainControl: usingVoiceEffect ? false : echoCancel,
+      latency: { ideal: usingVoiceEffect ? 0.02 : 0.01 },
     };
   }
 
@@ -2552,6 +2609,9 @@ export default function App() {
             return;
           }
           const shifter = new AudioWorkletNode(ctx, "pitch-shift-processor", {
+            numberOfInputs: 1,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
             parameterData: { rate },
           });
           if (shifter.parameters?.get("rate")) {
@@ -2568,7 +2628,7 @@ export default function App() {
         }
       }
       if (!pitchApplied) {
-        const shifter = ctx.createScriptProcessor(2048, 1, 2);
+        const shifter = ctx.createScriptProcessor(2048, 1, 1);
         const bufferSize = 16384;
         const ring = new Float32Array(bufferSize);
         let writeIndex = 0;
@@ -2602,7 +2662,6 @@ export default function App() {
         shifter.onaudioprocess = (e) => {
           const inputL = e.inputBuffer.getChannelData(0);
           const outputL = e.outputBuffer.getChannelData(0);
-          const outputR = e.outputBuffer.getChannelData(1);
           const len = inputL.length;
           for (let i = 0; i < len; i++) {
             ring[writeIndex] = inputL[i] || 0;
@@ -2616,7 +2675,6 @@ export default function App() {
               }
             }
             outputL[i] = sample;
-            outputR[i] = sample;
             writeIndex = (writeIndex + 1) % bufferSize;
           }
         };
@@ -2808,6 +2866,10 @@ export default function App() {
   }, [user?.id]);
 
   useEffect(() => {
+    mutedChatsRef.current = mutedChats || {};
+  }, [mutedChats]);
+
+  useEffect(() => {
     if (!user?.id) return;
     localStorage.setItem(`xp-game-audio-muted:${user.id}`, gameAudioMuted ? "1" : "0");
   }, [user?.id, gameAudioMuted]);
@@ -2856,6 +2918,7 @@ export default function App() {
     audio.loop = true;
     audio.preload = "auto";
     audio.src = GAME_LOOP_URL;
+    audio.load();
     audio.volume = 0;
   }, []);
 
@@ -2864,19 +2927,31 @@ export default function App() {
     if (!audio) return;
     audio.preload = "auto";
     audio.src = COINFLIP_SFX_URL;
+    audio.load();
     audio.volume = gameAudioMuted ? 0 : 0.92;
   }, [gameAudioMuted]);
 
-  const shouldPlayGameMusic = (blackjackPanelOpen || miniGameHubOpen) && !gameAudioMuted;
+  const blackjackAudioActive =
+    blackjackPanelOpen &&
+    !!blackjackMatch?.id &&
+    (blackjackMatch.status === "active" || blackjackMatch.status === "deposit");
+  const miniGameAudioActive =
+    miniGameHubOpen &&
+    !!miniGameMatch?.id &&
+    (miniGameMatch.status === "deposit" ||
+      miniGameMatch.status === "revealing" ||
+      (miniGameMatch.game_type === "coinflip" && miniGameMatch.status === "active"));
+  const shouldPlayGameMusic = (blackjackAudioActive || miniGameAudioActive) && !gameAudioMuted;
 
   useEffect(() => {
     const audio = gameMusicAudioRef.current;
     if (!audio) return;
     if (shouldPlayGameMusic) {
+      audio.currentTime = audio.paused ? 0 : audio.currentTime;
       audio.play().catch(() => {});
       fadeGameMusic(0.24, 520);
     } else {
-      fadeGameMusic(0, 380);
+      stopGameAudioPlayback();
     }
     return () => {
       if (gameMusicFadeRef.current) {
@@ -2888,6 +2963,7 @@ export default function App() {
 
   useEffect(() => {
     if (gameAudioMuted) return;
+    if (!miniGameHubOpen) return;
     if (miniGameMatch?.game_type !== "coinflip") return;
     if (miniGameMatch?.status !== "ended") return;
     if (!miniGameMatch?.state?.result) return;
@@ -2898,12 +2974,18 @@ export default function App() {
     if (!audio) return;
     audio.currentTime = 0;
     audio.play().catch(() => {});
-  }, [miniGameMatch?.id, miniGameMatch?.game_type, miniGameMatch?.status, miniGameMatch?.state?.result, gameAudioMuted]);
+  }, [miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.game_type, miniGameMatch?.status, miniGameMatch?.state?.result, gameAudioMuted]);
+
+  useEffect(() => {
+    if (!miniGameHubOpen || miniGameMatch?.status !== "ended") {
+      lastCoinflipSfxRef.current = "";
+    }
+  }, [miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.status]);
 
   useEffect(() => {
     const match = blackjackMatch;
     const matchState = match?.state || null;
-    if (!match?.id || !matchState) {
+    if (!blackjackPanelOpen || !match?.id || !matchState) {
       prevBlackjackSnapshotRef.current = null;
       return;
     }
@@ -2941,7 +3023,30 @@ export default function App() {
       }
     }
     prevBlackjackSnapshotRef.current = snapshot;
-  }, [blackjackMatch?.id, blackjackMatch?.status, blackjackMatch?.winner_id, blackjackMatch?.state, user?.id, gameAudioMuted]);
+  }, [blackjackPanelOpen, blackjackMatch?.id, blackjackMatch?.status, blackjackMatch?.winner_id, blackjackMatch?.state, user?.id, gameAudioMuted]);
+
+  useEffect(() => {
+    const blackjackNeedsTick =
+      blackjackPanelOpen &&
+      !!blackjackMatch?.id &&
+      blackjackMatch.status === "deposit";
+    const miniGameNeedsTick =
+      miniGameHubOpen &&
+      !!miniGameMatch?.id &&
+      (miniGameMatch.status === "deposit" || miniGameMatch.status === "revealing");
+    if (!blackjackNeedsTick && !miniGameNeedsTick) return undefined;
+    const timer = setInterval(() => {
+      setGameUiNow(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [
+    blackjackPanelOpen,
+    blackjackMatch?.id,
+    blackjackMatch?.status,
+    miniGameHubOpen,
+    miniGameMatch?.id,
+    miniGameMatch?.status,
+  ]);
 
   useEffect(() => {
     if (!blackjackPanelOpen || !blackjackMatch?.id) return undefined;
@@ -2959,7 +3064,7 @@ export default function App() {
 
   useEffect(() => {
     if (!miniGameHubOpen || !miniGameMatch?.id) return undefined;
-    if (miniGameMatch.status !== "deposit" && miniGameMatch.status !== "ended") return undefined;
+    if (miniGameMatch.status !== "deposit" && miniGameMatch.status !== "revealing" && miniGameMatch.status !== "ended") return undefined;
     if (CHAIN_MODE !== "evm") return undefined;
     const timer = setInterval(() => {
       apiFetch(`/api/minigames/${miniGameMatch.id}/sync`, { method: "POST" })
@@ -3246,6 +3351,26 @@ export default function App() {
     setNotifications(data.notifications || []);
   }
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNotificationNow(Date.now());
+    }, 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (miniGameMatch?.status === "revealing" && miniGameRevealRemaining <= 0 && !miniGameRevealSyncRef.current) {
+      miniGameRevealSyncRef.current = true;
+      syncMiniGameMatch().finally(() => {
+        miniGameRevealSyncRef.current = false;
+      });
+      return;
+    }
+    if (miniGameMatch?.status !== "revealing") {
+      miniGameRevealSyncRef.current = false;
+    }
+  }, [miniGameMatch?.status, miniGameRevealRemaining]);
+
   async function loadFriendRequests() {
     const data = await apiFetch("/api/friends/requests");
     setRequests(data.requests || []);
@@ -3345,6 +3470,9 @@ export default function App() {
     setStoryPaused(false);
     setStoryViewersOpen(false);
     setStoryViewers([]);
+    setStoryReplyInput("");
+    setStoryShareOpen(false);
+    setStoryShareSearch("");
     const current = stories[userIndex]?.stories?.[storyIndex];
     if (current) {
       await apiFetch(`/api/stories/${current.id}/view`, { method: "POST" }).catch(() => {});
@@ -3373,6 +3501,9 @@ export default function App() {
     setStoryClosing(true);
     setStoryMenuOpen(false);
     setStoryViewersOpen(false);
+    setStoryShareOpen(false);
+    setStoryReplyInput("");
+    setStoryShareSearch("");
     setTimeout(() => {
       setStoryViewer((prev) => ({ ...prev, open: false }));
       setStoryClosing(false);
@@ -3430,9 +3561,169 @@ export default function App() {
     }
   }
 
+  async function openStoryById(storyId, ownerId) {
+    if (!storyId) return;
+    let userIndex = stories.findIndex((entry) => Number(entry.user?.id) === Number(ownerId));
+    let storyIndex =
+      userIndex !== -1
+        ? (stories[userIndex]?.stories || []).findIndex((entry) => Number(entry.id) === Number(storyId))
+        : -1;
+    if (userIndex !== -1 && storyIndex !== -1) {
+      viewStory(userIndex, storyIndex);
+      return;
+    }
+    try {
+      const data = await apiFetch(`/api/stories/item/${storyId}`);
+      const story = data?.story;
+      if (!story?.id) return;
+      let nextUserIndex = -1;
+      let nextStoryIndex = -1;
+      setStories((prev) => {
+        const nextStory = {
+          ...story,
+          url: story.media_url || story.url,
+          type: story.media_type || story.type,
+          viewed: false,
+        };
+        const existingUserIndex = prev.findIndex((entry) => Number(entry.user?.id) === Number(story.user?.id));
+        if (existingUserIndex !== -1) {
+          const next = [...prev];
+          const existingStories = next[existingUserIndex].stories || [];
+          const existingStoryIndex = existingStories.findIndex((entry) => Number(entry.id) === Number(story.id));
+          nextUserIndex = existingUserIndex;
+          nextStoryIndex = existingStoryIndex !== -1 ? existingStoryIndex : existingStories.length;
+          next[existingUserIndex] = {
+            ...next[existingUserIndex],
+            user: { ...next[existingUserIndex].user, ...story.user },
+            stories:
+              existingStoryIndex !== -1
+                ? existingStories.map((entry, idx) => (idx === existingStoryIndex ? { ...entry, ...nextStory } : entry))
+                : [...existingStories, nextStory],
+          };
+          return next;
+        }
+        nextUserIndex = prev.length;
+        nextStoryIndex = 0;
+        return [
+          ...prev,
+          {
+            user: story.user,
+            stories: [nextStory],
+            has_unviewed: true,
+          },
+        ];
+      });
+      setStoryViewer({ open: true, userIndex: nextUserIndex, storyIndex: nextStoryIndex });
+      setStoryPaused(false);
+      setStoryViewersOpen(false);
+      setStoryViewers([]);
+      setStoryReplyInput("");
+      setStoryShareOpen(false);
+      setStoryShareSearch("");
+      await apiFetch(`/api/stories/${story.id}/view`, { method: "POST" }).catch(() => {});
+    } catch {
+      // ignore unavailable story opens
+    }
+  }
+
+  async function sendStoryReply() {
+    if (!activeStory || !activeStoryUser || isOwnActiveStory) return;
+    const text = storyReplyInput.trim();
+    if (!text || storyReplyBusy) return;
+    setStoryReplyBusy(true);
+    try {
+      ensureFriendCard(activeStoryUser);
+      socketRef.current?.emit("dm:send", {
+        toId: activeStoryUser.id,
+        body: text,
+        type: "story_reply",
+        story: {
+          id: activeStory.id,
+          ownerId: activeStoryUser.id,
+          mediaUrl: activeStory.media_url || activeStory.url,
+          mediaType: activeStory.media_type || activeStory.type,
+        },
+      });
+      setStoryReplyInput("");
+    } finally {
+      setStoryReplyBusy(false);
+    }
+  }
+
+  function getStoryForwardTargets() {
+    const q = storyShareSearch.trim().toLowerCase();
+    const pool = [...friends];
+    [...friendsAll, ...manualDmUsersRef.current].forEach((entry) => {
+      if (!entry?.id) return;
+      if (!pool.some((f) => Number(f.id) === Number(entry.id))) pool.push(entry);
+    });
+    if (!q) return pool;
+    return pool.filter(
+      (entry) =>
+        String(entry.username || "").toLowerCase().includes(q) ||
+        String(entry.display_name || "").toLowerCase().includes(q)
+    );
+  }
+
+  function sendStoryShare(target) {
+    if (!activeStory || !target?.id) return;
+    ensureFriendCard(target);
+    socketRef.current?.emit("dm:send", {
+      toId: target.id,
+      body: "",
+      type: "story_share",
+      story: {
+        id: activeStory.id,
+        ownerId: activeStoryUser?.id || null,
+        mediaUrl: activeStory.media_url || activeStory.url,
+        mediaType: activeStory.media_type || activeStory.type,
+      },
+    });
+    setStoryShareOpen(false);
+    setStoryShareSearch("");
+  }
+
   async function deleteStory(id) {
     await apiFetch(`/api/stories/${id}`, { method: "DELETE" });
     loadStories();
+  }
+
+  function getGroupPeerSignalState(peerId) {
+    const existing = groupPeerSignalStateRef.current.get(peerId);
+    if (existing) return existing;
+    const next = {
+      makingOffer: false,
+      queuedNegotiation: false,
+      pendingIceCandidates: [],
+    };
+    groupPeerSignalStateRef.current.set(peerId, next);
+    return next;
+  }
+
+  async function flushPendingIceCandidates(pc, queue) {
+    if (!pc?.remoteDescription || !queue?.length) return;
+    while (queue.length) {
+      const candidate = queue.shift();
+      if (!candidate) continue;
+      try {
+        await pc.addIceCandidate(candidate);
+      } catch {
+        // ignore stale candidates
+      }
+    }
+  }
+
+  async function addIceCandidateOrQueue(pc, candidate, queue) {
+    if (!pc || !candidate) return;
+    if (!pc.remoteDescription) {
+      queue.push(candidate);
+      return;
+    }
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch {
+      queue.push(candidate);
+    }
   }
 
   function closeModalWithAnim(name, closeFn) {
@@ -3467,6 +3758,11 @@ export default function App() {
     }
     const pc = new RTCPeerConnection(STUN_CONFIG);
     pcRef.current = pc;
+    makingOfferRef.current = false;
+    negotiationQueuedRef.current = false;
+    pendingIceCandidatesRef.current = [];
+    dmScreenVideoSenderRef.current = null;
+    dmScreenAudioSenderRef.current = null;
 
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
@@ -3477,6 +3773,21 @@ export default function App() {
     pc.onnegotiationneeded = () => {
       if (callStateRef.current?.withUserId) {
         createOffer(callStateRef.current.withUserId);
+      }
+    };
+
+    pc.onsignalingstatechange = () => {
+      if (pcRef.current !== pc) return;
+      if (pc.signalingState === "stable") {
+        flushPendingIceCandidates(pc, pendingIceCandidatesRef.current);
+        if (negotiationQueuedRef.current && callStateRef.current?.withUserId) {
+          negotiationQueuedRef.current = false;
+          setTimeout(() => {
+            if (pcRef.current === pc && callStateRef.current?.withUserId) {
+              createOffer(callStateRef.current.withUserId);
+            }
+          }, 0);
+        }
       }
     };
 
@@ -3519,6 +3830,9 @@ export default function App() {
         if (state === "failed") {
           try {
             pc.restartIce();
+            if (callStateRef.current?.withUserId) {
+              createOffer(callStateRef.current.withUserId, { iceRestart: true });
+            }
           } catch {
             // ignore
           }
@@ -3562,6 +3876,7 @@ export default function App() {
         pc.addTrack(outTrack, processed);
       }
     }
+    createOffer(otherId);
     setAudioStreamTick((n) => n + 1);
   }
 
@@ -3752,13 +4067,64 @@ export default function App() {
     setScreenShareWindow((prev) => ({ ...prev, maximized: !prev.maximized, minimized: false }));
   }
 
-  async function createOffer(otherId) {
+  async function createOffer(otherId, options = {}) {
     if (!pcRef.current || !socketRef.current) return;
-    if (pcRef.current.signalingState !== "stable") return;
-    if (pcRef.current.localDescription?.type === "offer") return;
-    const offer = await pcRef.current.createOffer();
-    await pcRef.current.setLocalDescription(offer);
-    socketRef.current.emit("call:offer", { toId: otherId, offer });
+    if (makingOfferRef.current) {
+      negotiationQueuedRef.current = true;
+      return;
+    }
+    if (pcRef.current.signalingState !== "stable") {
+      negotiationQueuedRef.current = true;
+      return;
+    }
+    makingOfferRef.current = true;
+    try {
+      const offer = await pcRef.current.createOffer(options);
+      if (!pcRef.current || pcRef.current.signalingState !== "stable") {
+        negotiationQueuedRef.current = true;
+        return;
+      }
+      await pcRef.current.setLocalDescription(offer);
+      socketRef.current.emit("call:offer", { toId: otherId, offer: pcRef.current.localDescription || offer });
+    } catch {
+      // ignore transient negotiation races
+    } finally {
+      makingOfferRef.current = false;
+    }
+  }
+
+  async function createGroupOffer(groupId, peerId, options = {}) {
+    const entry = groupPeersRef.current.get(peerId);
+    const pc = entry?.pc;
+    if (!pc || !socketRef.current || !groupId) return;
+    const signalState = getGroupPeerSignalState(peerId);
+    if (signalState.makingOffer) {
+      signalState.queuedNegotiation = true;
+      return;
+    }
+    if (pc.signalingState !== "stable") {
+      signalState.queuedNegotiation = true;
+      return;
+    }
+    signalState.makingOffer = true;
+    try {
+      const offer = await pc.createOffer(options);
+      const currentPc = groupPeersRef.current.get(peerId)?.pc;
+      if (!currentPc || currentPc !== pc || pc.signalingState !== "stable") {
+        signalState.queuedNegotiation = true;
+        return;
+      }
+      await pc.setLocalDescription(offer);
+      socketRef.current.emit("group:call:offer", {
+        groupId,
+        toId: peerId,
+        offer: pc.localDescription || offer,
+      });
+    } catch {
+      // ignore transient negotiation races
+    } finally {
+      signalState.makingOffer = false;
+    }
   }
 
   // (sidebar resize removed)
@@ -3844,6 +4210,7 @@ export default function App() {
   }
 
   function toggleMute() {
+    if (callState.deafened && callState.muted) return;
     const nextMuted = !callState.muted;
     applyOutgoingAudioState(nextMuted, callState.deafened);
     setCallState((prev) => ({ ...prev, muted: nextMuted }));
@@ -3851,9 +4218,10 @@ export default function App() {
 
   function toggleDeafen() {
     const nextDeafened = !callState.deafened;
-    applyOutgoingAudioState(callState.muted, nextDeafened);
+    const nextMuted = nextDeafened ? true : callState.muted;
+    applyOutgoingAudioState(nextMuted, nextDeafened);
     applyIncomingAudioState(nextDeafened);
-    setCallState((prev) => ({ ...prev, deafened: nextDeafened }));
+    setCallState((prev) => ({ ...prev, muted: nextMuted, deafened: nextDeafened }));
   }
 
   function emitDirectCallStatus(nextState = callStateRef.current) {
@@ -4034,6 +4402,9 @@ export default function App() {
 
   function teardownPeer() {
     micBuildSeqRef.current += 1;
+    makingOfferRef.current = false;
+    negotiationQueuedRef.current = false;
+    pendingIceCandidatesRef.current = [];
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
@@ -4081,7 +4452,16 @@ export default function App() {
   async function setupGroupPeer(groupId, peerId) {
     if (groupPeersRef.current.has(peerId)) return;
     const pc = new RTCPeerConnection(STUN_CONFIG);
-    groupPeersRef.current.set(peerId, { pc, audioStream: null });
+    groupPeersRef.current.set(peerId, {
+      pc,
+      audioStream: null,
+      screenVideoSender: null,
+      screenAudioSender: null,
+    });
+    const signalState = getGroupPeerSignalState(peerId);
+    signalState.makingOffer = false;
+    signalState.queuedNegotiation = false;
+    signalState.pendingIceCandidates = [];
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -4090,9 +4470,23 @@ export default function App() {
     };
 
     pc.onnegotiationneeded = async () => {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socketRef.current?.emit("group:call:offer", { groupId, toId: peerId, offer });
+      createGroupOffer(groupId, peerId);
+    };
+
+    pc.onsignalingstatechange = () => {
+      const current = groupPeersRef.current.get(peerId)?.pc;
+      if (current !== pc) return;
+      if (pc.signalingState === "stable") {
+        flushPendingIceCandidates(pc, signalState.pendingIceCandidates);
+        if (signalState.queuedNegotiation) {
+          signalState.queuedNegotiation = false;
+          setTimeout(() => {
+            if (groupPeersRef.current.get(peerId)?.pc === pc && groupCallRef.current?.groupId === groupId) {
+              createGroupOffer(groupId, peerId);
+            }
+          }, 0);
+        }
+      }
     };
 
     pc.ontrack = (event) => {
@@ -4136,9 +4530,7 @@ export default function App() {
       }
     }
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socketRef.current?.emit("group:call:offer", { groupId, toId: peerId, offer });
+    createGroupOffer(groupId, peerId);
   }
 
   function cleanupGroupPeer(peerId) {
@@ -4150,6 +4542,7 @@ export default function App() {
       entry.audioStream.getTracks().forEach((t) => t.stop());
     }
     groupPeersRef.current.delete(peerId);
+    groupPeerSignalStateRef.current.delete(peerId);
     setGroupShares((prev) => {
       const next = { ...prev };
       delete next[peerId];
@@ -4160,6 +4553,7 @@ export default function App() {
   function cleanupGroupCall() {
     groupPeersRef.current.forEach((entry) => entry.pc.close());
     groupPeersRef.current.clear();
+    groupPeerSignalStateRef.current.clear();
     if (groupLocalStreamRef.current && groupLocalStreamRef.current !== localStreamRef.current) {
       groupLocalStreamRef.current.getTracks().forEach((t) => t.stop());
     }
@@ -4183,23 +4577,23 @@ export default function App() {
       if (track) track.contentHint = "detail";
       const screenAudio = display.getAudioTracks()[0];
       groupPeersRef.current.forEach(async (entry, peerId) => {
-        const sender = entry.pc.getSenders().find((s) => s.track && s.track.kind === "video");
+        let sender = entry.screenVideoSender || entry.pc.getSenders().find((s) => s.track && s.track.kind === "video");
         if (sender) {
           await sender.replaceTrack(track);
         } else {
-          entry.pc.addTrack(track, display);
+          sender = entry.pc.addTrack(track, display);
         }
+        entry.screenVideoSender = sender;
         if (screenAudio) {
-          const audioSender = entry.pc.getSenders().find(
-            (s) => s.track && s.track.kind === "audio" && s.track.label === screenAudio.label
-          );
-          if (!audioSender) {
-            entry.pc.addTrack(screenAudio, display);
+          let audioSender = entry.screenAudioSender;
+          if (audioSender) {
+            await audioSender.replaceTrack(screenAudio);
+          } else {
+            audioSender = entry.pc.addTrack(screenAudio, display);
           }
+          entry.screenAudioSender = audioSender;
         }
-        const offer = await entry.pc.createOffer();
-        await entry.pc.setLocalDescription(offer);
-        socketRef.current?.emit("group:call:offer", { groupId: groupCall.groupId, toId: peerId, offer });
+        createGroupOffer(groupCall.groupId, peerId);
       });
       openScreenShareWindow("Sharing: You");
       track.onended = () => stopGroupScreenShare();
@@ -4209,14 +4603,16 @@ export default function App() {
   }
 
   async function stopGroupScreenShare() {
+    groupPeersRef.current.forEach((entry) => {
+      entry?.screenVideoSender?.replaceTrack(null).catch(() => {});
+      entry?.screenAudioSender?.replaceTrack(null).catch(() => {});
+    });
     groupLocalScreenRef.current?.getTracks().forEach((t) => t.stop());
     groupLocalScreenRef.current = null;
     closeScreenShareWindow();
     groupPeersRef.current.forEach(async (entry, peerId) => {
       if (!entry?.pc) return;
-      const offer = await entry.pc.createOffer();
-      await entry.pc.setLocalDescription(offer);
-      socketRef.current?.emit("group:call:offer", { groupId: groupCall.groupId, toId: peerId, offer });
+      createGroupOffer(groupCall.groupId, peerId);
     });
   }
 
@@ -4265,13 +4661,11 @@ export default function App() {
     dmLocalScreenRef.current = null;
     setDmShareActive(false);
     if (pcRef.current && dmScreenVideoSenderRef.current) {
-      pcRef.current.removeTrack(dmScreenVideoSenderRef.current);
+      dmScreenVideoSenderRef.current.replaceTrack(null).catch(() => {});
     }
     if (pcRef.current && dmScreenAudioSenderRef.current) {
-      pcRef.current.removeTrack(dmScreenAudioSenderRef.current);
+      dmScreenAudioSenderRef.current.replaceTrack(null).catch(() => {});
     }
-    dmScreenVideoSenderRef.current = null;
-    dmScreenAudioSenderRef.current = null;
     closeScreenShareWindow();
     if (callState.withUserId) {
       createOffer(callState.withUserId);
@@ -4736,12 +5130,24 @@ export default function App() {
     if (!friendSearch.trim()) return;
     setFriendError("");
     setFriendSuccess("");
+    const searchValue = friendSearch.trim();
+    const targetUser =
+      allUsers.find((u) =>
+        u.username?.toLowerCase() === searchValue.toLowerCase() ||
+        (u.aliases || []).some((a) => a.toLowerCase() === searchValue.toLowerCase())
+      ) ||
+      friendsAll.find((u) =>
+        u.username?.toLowerCase() === searchValue.toLowerCase() ||
+        (u.aliases || []).some((a) => a.toLowerCase() === searchValue.toLowerCase())
+      ) ||
+      null;
     try {
       await apiFetch("/api/friends/request", {
         method: "POST",
-        body: JSON.stringify({ username: friendSearch.trim() }),
+        body: JSON.stringify({ username: searchValue }),
       });
-      setFriendSuccess(`Friend request sent to @${friendSearch.trim()}`);
+      if (targetUser) ensureFriendCard(targetUser);
+      setFriendSuccess(`Friend request sent to @${searchValue}`);
       setFriendSearch("");
       loadChats();
       loadFriendRequests();
@@ -4751,7 +5157,18 @@ export default function App() {
   }
 
   async function acceptRequest(id) {
+    const request = requests.find((r) => Number(r.id) === Number(id));
     await apiFetch(`/api/friends/requests/${id}/accept`, { method: "POST" });
+    if (request) {
+      ensureFriendCard({
+        id: request.from_user_id,
+        username: request.username,
+        display_name: request.display_name || request.username,
+        avatar: request.avatar,
+        status: request.status || "offline",
+        custom_status: request.custom_status || "",
+      });
+    }
     loadChats();
     loadFriendRequests();
   }
@@ -4957,6 +5374,7 @@ export default function App() {
 
   function saveMutedChats(next) {
     setMutedChats(next);
+    mutedChatsRef.current = next;
     if (user?.id) {
       localStorage.setItem(`xp-muted-chats:${user.id}`, JSON.stringify(next));
     }
@@ -4967,6 +5385,50 @@ export default function App() {
     if (!value) return false;
     if (value === "forever") return true;
     return Date.now() < value;
+  }
+
+  function isChatMutedLive(key) {
+    const value = mutedChatsRef.current?.[key];
+    if (!value) return false;
+    if (value === "forever") return true;
+    return Date.now() < value;
+  }
+
+  function playMessageAlert() {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!messageAlertAudioCtxRef.current) {
+        messageAlertAudioCtxRef.current = new AudioCtx();
+      }
+      const ctx = messageAlertAudioCtxRef.current;
+      if (ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+      const now = ctx.currentTime;
+      const master = ctx.createGain();
+      master.gain.setValueAtTime(0.0001, now);
+      master.gain.exponentialRampToValueAtTime(0.05, now + 0.012);
+      master.gain.exponentialRampToValueAtTime(0.0001, now + 0.32);
+      master.connect(ctx.destination);
+
+      const oscA = ctx.createOscillator();
+      oscA.type = "sine";
+      oscA.frequency.setValueAtTime(880, now);
+      oscA.frequency.exponentialRampToValueAtTime(1174, now + 0.18);
+      oscA.connect(master);
+      oscA.start(now);
+      oscA.stop(now + 0.22);
+
+      const oscB = ctx.createOscillator();
+      oscB.type = "triangle";
+      oscB.frequency.setValueAtTime(1318, now + 0.06);
+      oscB.connect(master);
+      oscB.start(now + 0.05);
+      oscB.stop(now + 0.18);
+    } catch {
+      // no-op
+    }
   }
 
   function setChatMute(key, durationMs) {
@@ -5144,15 +5606,16 @@ export default function App() {
     }
   }
 
-  async function openBlackjackMatch(matchId) {
+  async function openBlackjackMatch(matchId, options = {}) {
     if (!matchId) return;
+    const { openPanel = true } = options;
     setBlackjackLoadingMatch(true);
     setBlackjackError("");
     try {
       const data = await apiFetch(`/api/blackjack/${matchId}`);
       if (data?.match) {
         setBlackjackMatch(data.match);
-        setBlackjackPanelOpen(true);
+        setBlackjackPanelOpen(openPanel);
         if (data.match?.players && user?.id) {
           const me = data.match.players.find((p) => p.user_id === user.id);
           setBlackjackWallet(me?.wallet_address || "");
@@ -5427,6 +5890,11 @@ export default function App() {
       });
       if (res?.match) setBlackjackMatch(res.match);
       }
+      if (blackjackClaimNotificationId) {
+        await apiFetch(`/api/notifications/${blackjackClaimNotificationId}/read`, { method: "POST" }).catch(() => {});
+        setBlackjackClaimNotificationId(null);
+        loadNotifications();
+      }
       setBlackjackClaimOpen(false);
       setBlackjackClaimAddress("");
     } catch (err) {
@@ -5436,14 +5904,15 @@ export default function App() {
     }
   }
 
-  async function openMiniGameMatch(matchId) {
+  async function openMiniGameMatch(matchId, options = {}) {
     if (!matchId) return;
+    const { openPanel = true } = options;
     setMiniGameError("");
     try {
       const data = await apiFetch(`/api/minigames/${matchId}`);
       if (data?.match) {
         setMiniGameMatch(data.match);
-        setMiniGameHubOpen(true);
+        setMiniGameHubOpen(openPanel);
         setMiniGameDepositAmount(String(data.match.wager_amount || 10));
         const mine = (data.match.players || []).find((p) => p.user_id === user?.id);
         if (mine?.wallet_address) {
@@ -5660,6 +6129,11 @@ export default function App() {
         });
         if (res?.match) setMiniGameMatch(res.match);
       }
+      if (miniGameClaimNotificationId) {
+        await apiFetch(`/api/notifications/${miniGameClaimNotificationId}/read`, { method: "POST" }).catch(() => {});
+        setMiniGameClaimNotificationId(null);
+        loadNotifications();
+      }
       setMiniGameClaimOpen(false);
     } catch (err) {
       setMiniGameError(err.message || "Claim failed");
@@ -5671,7 +6145,7 @@ export default function App() {
   async function copyEscrowAddress(address, setMessage) {
     try {
       await copyText(address);
-      setMessage("Escrow address copied.");
+      setMessage("Address copied.");
       setTimeout(() => setMessage(""), 1800);
     } catch {
       setMessage("Unable to copy address.");
@@ -5691,6 +6165,7 @@ export default function App() {
     setBlackjackMatch(null);
     setBlackjackClaimOpen(false);
     setBlackjackClaimAddress("");
+    setBlackjackClaimNotificationId(null);
     setBlackjackError("");
     setBlackjackUiMessage("");
     setBlackjackPanelOpen(true);
@@ -5709,6 +6184,7 @@ export default function App() {
     setMiniGameMatch(null);
     setMiniGameClaimOpen(false);
     setMiniGameClaimAddress("");
+    setMiniGameClaimNotificationId(null);
     setMiniGameError("");
     setMiniGameUiMessage("");
     setMiniGameHubOpen(true);
@@ -6593,7 +7069,9 @@ export default function App() {
       );
     }
     if (n?.type === "blackjack_claim") {
-      return "You won a Blackjack match. Claim your winnings.";
+      const winner = payload?.winnerUsername ? `@${payload.winnerUsername}` : "You";
+      const amount = payload?.pot ? `${Number(payload.pot).toFixed(2)} ${payload.token || "USDC"}` : "your winnings";
+      return `${winner} has won ${amount}.`;
     }
     if (n?.type === "minigame_invite") {
       if (isGameInviteExpired(n)) {
@@ -6609,7 +7087,9 @@ export default function App() {
       );
     }
     if (n?.type === "minigame_claim") {
-      return "You won a mini game. Claim your winnings.";
+      const winner = payload?.winnerUsername ? `@${payload.winnerUsername}` : "You";
+      const amount = payload?.pot ? `${Number(payload.pot).toFixed(2)} ${payload.token || "USDC"}` : "your winnings";
+      return `${winner} has won ${amount}.`;
     }
     const from = (n?.from_username || "").toLowerCase();
     if (!from) return text;
@@ -6773,16 +7253,24 @@ export default function App() {
     !!profileSong &&
     profileSongPlayer.ownerId === profileUser?.id &&
     profileSongPlayer.playing;
+  const activeStoryUser = storyViewer.open ? stories[storyViewer.userIndex]?.user || null : null;
+  const activeStory = storyViewer.open ? stories[storyViewer.userIndex]?.stories?.[storyViewer.storyIndex] || null : null;
+  const isOwnActiveStory = !!activeStoryUser && activeStoryUser.id === user?.id;
   const blackjackState = blackjackMatch?.state || null;
   const blackjackPlayers = blackjackMatch?.players || [];
   const blackjackMe = blackjackPlayers.find((p) => p.user_id === user?.id) || null;
   const blackjackOpponent = blackjackPlayers.find((p) => p.user_id !== user?.id) || null;
   const blackjackIsMyTurn = blackjackState?.currentPlayerId === user?.id;
   const blackjackPot = blackjackMatch
-    ? Number(blackjackMatch.wager_amount || 0) * blackjackPlayers.length
+    ? blackjackPlayers.reduce(
+        (sum, p) => sum + Number(p.deposited_amount || p.deposit_amount || 0),
+        0
+      )
     : 0;
+  const blackjackPotLabel =
+    blackjackMatch?.status === "deposit" ? "Locked" : "Pot";
   const blackjackDepositRemaining = blackjackMatch?.deposit_deadline
-    ? Math.max(0, new Date(blackjackMatch.deposit_deadline).getTime() - Date.now())
+    ? Math.max(0, new Date(blackjackMatch.deposit_deadline).getTime() - gameUiNow)
     : 0;
   const blackjackCallOpponent = resolveUserById(callState.withUserId, {
     user,
@@ -6812,8 +7300,19 @@ export default function App() {
     0
   );
   const miniGameCountdownRemaining = miniGameMatch?.state?.countdownEndsAt
-    ? Math.max(0, new Date(miniGameMatch.state.countdownEndsAt).getTime() - Date.now())
+    ? Math.max(0, new Date(miniGameMatch.state.countdownEndsAt).getTime() - gameUiNow)
     : 0;
+  const miniGameRevealRemaining = miniGameMatch?.state?.revealEndsAt
+    ? Math.max(0, new Date(miniGameMatch.state.revealEndsAt).getTime() - gameUiNow)
+    : 0;
+  const miniGameHideLockedAmounts =
+    miniGameMatch?.game_type === "bigbank" &&
+    miniGameMatch?.status !== "ended" &&
+    miniGameMatch?.status !== "settled" &&
+    miniGameMatch?.status !== "refunded";
+  const miniGamePotLabel = miniGameHideLockedAmounts
+    ? "Hidden"
+    : `${miniGamePot.toFixed(2)} ${miniGameMatch?.token || ""}`.trim();
   const miniGameTargetId = Number(miniGameInvite.targetId || selectedFriend?.id || friends?.[0]?.id || 0);
   const miniGameWinner = miniGameMatch?.winner_id
     ? resolveUserById(miniGameMatch.winner_id, { user, friends, friendsAll, manualDmUsers, allUsers })
@@ -6841,9 +7340,17 @@ export default function App() {
   }));
   const walletOptions = useMemo(() => {
     const injected = listInjectedWallets();
-    const options = [...injected];
+    const iconById = {
+      metamask: metamaskWalletIcon,
+      "phantom-evm": phantomWalletIcon,
+      trust: trustWalletIcon,
+    };
+    const options = injected.map((option) => ({
+      ...option,
+      icon: iconById[option.id] || "",
+    }));
     if (WALLETCONNECT_PROJECT_ID) {
-      options.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect" });
+      options.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect", icon: "" });
     }
     return options;
   }, []);
@@ -6885,14 +7392,8 @@ export default function App() {
       </div>
     );
   };
-  const renderGameAudioStrip = (mode = "casino") => (
+  const renderGameAudioStrip = () => (
     <div className="xp-game-audio-strip">
-      <div className="xp-game-audio-meta">
-        <div className="xp-game-audio-title">Game Audio</div>
-        <div className="xp-game-audio-sub">
-          {mode === "coinflip" ? "Bet loop + coinflip sting" : "Bet loop ambience"}
-        </div>
-      </div>
       <button
         className={`xp-button xp-game-audio-toggle ${gameAudioMuted ? "muted" : ""}`}
         type="button"
@@ -7155,6 +7656,14 @@ export default function App() {
                           if (r.type === "group") {
                             selectGroup(r.id);
                           } else {
+                            const userRow = findDmUserRow(r.id) || {
+                              id: r.id,
+                              username: String(r.sub || "").replace(/^@/, ""),
+                              display_name: r.label || "",
+                              avatar: r.avatar || "",
+                              status: r.status || "offline",
+                            };
+                            ensureFriendCard(userRow);
                             selectDm(r.id);
                           }
                           setSearchQuery("");
@@ -7246,7 +7755,7 @@ export default function App() {
                       {(() => {
                         const inviteExpired =
                           (n.type === "blackjack_invite" || n.type === "minigame_invite") &&
-                          isGameInviteExpired(n);
+                          isGameInviteExpired(n, notificationNow);
                         return (
                           <>
                       <div className="xp-notification-text">
@@ -7298,12 +7807,12 @@ export default function App() {
                           <button
                             className="xp-button"
                             onClick={() => {
-                              openBlackjackMatch(n.ref_id);
+                              openBlackjackMatch(n.ref_id, { openPanel: false });
+                              setBlackjackClaimNotificationId(n.id);
                               setBlackjackClaimOpen(true);
-                              apiFetch(`/api/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
                             }}
                           >
-                            Claim
+                            Claim ur win
                           </button>
                         )}
                         {n.type === "minigame_invite" && n.ref_id && !inviteExpired && (
@@ -7329,12 +7838,12 @@ export default function App() {
                           <button
                             className="xp-button"
                             onClick={() => {
-                              openMiniGameMatch(n.ref_id);
+                              openMiniGameMatch(n.ref_id, { openPanel: false });
+                              setMiniGameClaimNotificationId(n.id);
                               setMiniGameClaimOpen(true);
-                              apiFetch(`/api/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
                             }}
                           >
-                            Claim
+                            Claim ur win
                           </button>
                         )}
                       </div>
@@ -7959,6 +8468,39 @@ export default function App() {
                                 Forwarded · {msg.forwarded_from_display || msg.forwarded_from_username || getUserById(msg.forwarded_from_id)?.username || ""}
                               </div>
                             )}
+                            {isStoryMessageType(msg.type) && (
+                              <button
+                                type="button"
+                                className="xp-story-message-card"
+                                onClick={() => openStoryById(msg.story_id, msg.story_owner_id)}
+                              >
+                                <div className="xp-story-message-media">
+                                  {msg.story_media_type === "video" ? (
+                                    <video
+                                      src={resolveMediaUrl(msg.story_media_url)}
+                                      muted
+                                      playsInline
+                                      autoPlay
+                                      loop
+                                    />
+                                  ) : (
+                                    <img src={resolveMediaUrl(msg.story_media_url)} alt="" />
+                                  )}
+                                </div>
+                                <div className="xp-story-message-copy">
+                                  <div className="xp-story-message-label">
+                                    {msg.type === "story_reply"
+                                      ? msg.sender_id === user.id
+                                        ? "Replied to their story"
+                                        : "Replied to your story"
+                                      : msg.sender_id === user.id
+                                      ? "You shared a story"
+                                      : `@${selectedFriend?.username || "user"} shared a story`}
+                                  </div>
+                                  <div className="xp-story-message-cta">Tap to view story</div>
+                                </div>
+                              </button>
+                            )}
                             {isImageType(msg.type) && (
                               <div className="xp-message-media">
                                 <img src={resolveMediaUrl(msg.image_url)} alt="" />
@@ -8031,7 +8573,7 @@ export default function App() {
                                 />
                               </div>
                             )}
-                            {!msg.is_system && !isImageType(msg.type) && !isAudioType(msg.type) && (
+                            {!msg.is_system && !isImageType(msg.type) && !isAudioType(msg.type) && msg.type !== "story_share" && (
                               <div className="xp-message-text">
                                 {editingMessageId === msg.id ? (
                                   <input
@@ -10267,11 +10809,27 @@ export default function App() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="xp-story-title">
-              <span>@{stories[storyViewer.userIndex]?.user?.username}'s story</span>
+              <span>@{activeStoryUser?.username}'s story</span>
               <div className="xp-story-meta">
-                {timeAgo(stories[storyViewer.userIndex]?.stories?.[storyViewer.storyIndex]?.created_at)}
+                {timeAgo(activeStory?.created_at)}
               </div>
               <div className="xp-story-actions">
+                {!isOwnActiveStory && (
+                  <button
+                    className="xp-button xp-story-forward"
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setStoryShareOpen(true);
+                    }}
+                    title="Forward story"
+                  >
+                    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+                      <path d="M21 4L10 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <path d="M21 4l-7 16-4-6-6-4 17-6Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                )}
                 {stories[storyViewer.userIndex]?.user?.id === user.id && (
                   <button
                     className="xp-button xp-story-viewers"
@@ -10364,8 +10922,25 @@ export default function App() {
             </div>
             <div className="xp-story-body">
               <div className="xp-story-media-wrap">
+                {activeStoryUser && (
+                  <button
+                    className="xp-story-user-chip"
+                    type="button"
+                    onClick={() => loadProfile(activeStoryUser.id)}
+                  >
+                    <img
+                      src={avatarUrl(activeStoryUser.avatar, activeStoryUser.username)}
+                      alt=""
+                      onError={(e) => onAvatarError(e, activeStoryUser.username)}
+                    />
+                    <div>
+                      <div className="xp-story-user-name">@{activeStoryUser.username}</div>
+                      <div className="xp-story-user-sub">{activeStoryUser.display_name || activeStoryUser.username}</div>
+                    </div>
+                  </button>
+                )}
                 {(() => {
-                  const current = stories[storyViewer.userIndex]?.stories?.[storyViewer.storyIndex];
+                  const current = activeStory;
                   if (!current) return null;
                   const src = resolveMediaUrl(current.url || current.media_url || current.mediaUrl || "");
                   if (current.type === "video") {
@@ -10401,6 +10976,33 @@ export default function App() {
                   }} />
                 </div>
               </div>
+              {!isOwnActiveStory && activeStoryUser && (
+                <div className="xp-story-reply-bar">
+                  <input
+                    value={storyReplyInput}
+                    maxLength={300}
+                    onChange={(e) => setStoryReplyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        sendStoryReply();
+                      }
+                    }}
+                    placeholder="Send message..."
+                  />
+                  <button
+                    className="xp-button xp-story-send"
+                    type="button"
+                    onClick={sendStoryReply}
+                    disabled={!storyReplyInput.trim() || storyReplyBusy}
+                    title="Send story reply"
+                  >
+                    <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
+                      <path d="M21 4l-7 16-4-6-6-4 17-6Z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              )}
               {(stories[storyViewer.userIndex]?.stories || []).length > 1 && (
                 <div className="xp-story-desktop-nav">
                   <button
@@ -10474,6 +11076,47 @@ export default function App() {
                     <button className="xp-button" onClick={() => setStoryDeleteConfirm(false)}>
                       Cancel
                     </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {storyShareOpen && (
+              <div className="xp-modal-overlay story-viewers-overlay" onClick={() => setStoryShareOpen(false)}>
+                <div className="xp-modal xp-story-share-modal" onClick={(e) => e.stopPropagation()}>
+                  <div className="xp-modal-title">
+                    <span>Forward story</span>
+                    <button className="xp-modal-close" onClick={() => setStoryShareOpen(false)}>
+                      x
+                    </button>
+                  </div>
+                  <div className="xp-modal-body xp-story-share-body">
+                    <input
+                      className="xp-input"
+                      value={storyShareSearch}
+                      onChange={(e) => setStoryShareSearch(e.target.value)}
+                      placeholder="Search friends..."
+                    />
+                    <div className="xp-story-share-list">
+                      {getStoryForwardTargets().map((target) => (
+                        <button
+                          key={target.id}
+                          className="xp-story-share-item"
+                          type="button"
+                          onClick={() => sendStoryShare(target)}
+                        >
+                          <img
+                            src={avatarUrl(target.avatar, target.username)}
+                            alt=""
+                            onError={(e) => onAvatarError(e, target.username)}
+                          />
+                          <div>
+                            <div className="xp-forward-name">@{target.username}</div>
+                            <div className="xp-forward-sub">{target.display_name || target.username}</div>
+                          </div>
+                        </button>
+                      ))}
+                      {getStoryForwardTargets().length === 0 && <div className="xp-muted">No matching friends</div>}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -11055,7 +11698,7 @@ export default function App() {
             {screenShareWindow.label || "Screen Share"}
             <div className="xp-call-window-actions">
               <button className="xp-button" type="button" onClick={toggleScreenShareWindowMinimized} title={screenShareWindow.minimized ? "Restore" : "Minimize"}>
-                _
+                <span className="xp-call-window-icon" aria-hidden="true">-</span>
               </button>
               <button className="xp-button" type="button" onClick={toggleScreenShareWindowMaximized} title={screenShareWindow.maximized ? "Restore down" : "Maximize"}>
                 {screenShareWindow.maximized ? "❐" : "□"}
@@ -11064,7 +11707,7 @@ export default function App() {
             </div>
           </div>
           {!screenShareWindow.minimized && (
-            <div className="xp-call-window-body">
+            <div className="xp-call-window-body xp-share-grid">
               {groupLocalScreenRef.current && (
                 <div className="xp-share-tile">
                   <div className="xp-share-label">You</div>
@@ -11371,14 +12014,10 @@ export default function App() {
                     renderGameAudioStrip("casino")}
                   <div className="xp-blackjack-header">
                     <div>
-                      <div className="xp-blackjack-title">Pot</div>
+                      <div className="xp-blackjack-title">{blackjackPotLabel}</div>
                       <div className="xp-blackjack-pot">
                         {blackjackPot.toFixed(2)} {blackjackMatch.token}
                       </div>
-                    </div>
-                    <div className="xp-blackjack-meta">
-                      <span>{blackjackMatch.chain}</span>
-                      <span>{blackjackMatch.status}</span>
                     </div>
                   </div>
 
@@ -11389,18 +12028,22 @@ export default function App() {
                         <div className="xp-blackjack-sub">
                           Send exactly {Number(blackjackMatch.wager_amount).toFixed(2)} {blackjackMatch.token} to the match escrow.
                         </div>
-                        <div className="xp-blackjack-address">
-                          {blackjackMatch.escrow_address || "Generating address..."}
+                        <div className="xp-blackjack-address-block">
+                          <div className="xp-blackjack-address">
+                            {blackjackMatch.escrow_address || "Generating address..."}
+                          </div>
+                          {blackjackMatch.escrow_address && (
+                            <div className="xp-blackjack-address-actions">
+                              <button
+                                className="xp-button"
+                                type="button"
+                                onClick={() => copyEscrowAddress(blackjackMatch.escrow_address, setBlackjackUiMessage)}
+                              >
+                                Copy Address
+                              </button>
+                            </div>
+                          )}
                         </div>
-                        {blackjackMatch.escrow_address && (
-                          <button
-                            className="xp-button"
-                            type="button"
-                            onClick={() => copyEscrowAddress(blackjackMatch.escrow_address, setBlackjackUiMessage)}
-                          >
-                            Copy Address
-                          </button>
-                        )}
                         <div className="xp-blackjack-timer">
                           Time left: {formatDuration(Math.ceil(blackjackDepositRemaining / 1000))}
                         </div>
@@ -11462,13 +12105,16 @@ export default function App() {
                               </button>
                             </>
                           ) : (
-                            <button
-                              className="xp-button"
-                              onClick={simulateBlackjackDeposit}
-                              disabled={blackjackActionBusy}
-                            >
-                              Mark Deposited (dev)
-                            </button>
+                            <div className="xp-blackjack-dev-tools">
+                              <div className="xp-muted">Testing mode only</div>
+                              <button
+                                className="xp-button"
+                                onClick={simulateBlackjackDeposit}
+                                disabled={blackjackActionBusy}
+                              >
+                                Simulate Deposit
+                              </button>
+                            </div>
                           )}
                         </div>
                         {CHAIN_MODE === "evm" && !blackjackEscrowReady && (
@@ -11596,7 +12242,7 @@ export default function App() {
                               <div className="xp-blackjack-win">You won the match.</div>
                               <div className="xp-button-row">
                                 <button className="xp-button" onClick={() => setBlackjackClaimOpen(true)}>
-                                  Claim Winnings
+                                  Claim ur win
                                 </button>
                                 <button className="xp-button" onClick={prepareBlackjackRematch}>
                                   Rematch
@@ -11744,9 +12390,7 @@ export default function App() {
                           : "Secretly lock your amount. Highest deposit takes everything."}
                       </div>
                     </div>
-                    <div className="xp-minigame-pot">
-                      Pot: {miniGamePot.toFixed(2)} {miniGameMatch.token}
-                    </div>
+                    <div className="xp-minigame-pot">Pot: {miniGamePotLabel}</div>
                   </div>
 
                   <div className="xp-minigame-players">
@@ -11771,7 +12415,9 @@ export default function App() {
                             )}
                           </div>
                           <div className="xp-minigame-seat-amount">
-                            {player.status === "deposited" || miniGameMatch.status === "ended" || miniGameMatch.status === "settled"
+                            {miniGameHideLockedAmounts
+                              ? "Hidden"
+                              : player.status === "deposited" || miniGameMatch.status === "ended" || miniGameMatch.status === "settled" || miniGameMatch.status === "refunded"
                               ? `${Number(player.deposited_amount || player.deposit_amount || 0).toFixed(2)} ${miniGameMatch.token}`
                               : miniGameMatch.game_type === "coinflip"
                                 ? `${Number(miniGameMatch.wager_amount).toFixed(2)} ${miniGameMatch.token}`
@@ -11809,16 +12455,18 @@ export default function App() {
                         </div>
                       )}
                       {miniGameMatch.escrow_address && CHAIN_MODE === "evm" && (
-                        <>
+                        <div className="xp-blackjack-address-block">
                           <div className="xp-blackjack-address">{miniGameMatch.escrow_address}</div>
-                          <button
-                            className="xp-button"
-                            type="button"
-                            onClick={() => copyEscrowAddress(miniGameMatch.escrow_address, setMiniGameUiMessage)}
-                          >
-                            Copy Address
-                          </button>
-                        </>
+                          <div className="xp-blackjack-address-actions">
+                            <button
+                              className="xp-button"
+                              type="button"
+                              onClick={() => copyEscrowAddress(miniGameMatch.escrow_address, setMiniGameUiMessage)}
+                            >
+                              Copy Address
+                            </button>
+                          </div>
+                        </div>
                       )}
                       <div className="xp-minigame-action-row">
                         <label>
@@ -11846,9 +12494,12 @@ export default function App() {
                             </button>
                           </>
                         ) : (
-                          <button className="xp-button" onClick={depositMiniGame} disabled={miniGameBusy}>
-                            Lock Wager
-                          </button>
+                          <div className="xp-blackjack-dev-tools">
+                            <div className="xp-muted">Testing mode only</div>
+                            <button className="xp-button" onClick={depositMiniGame} disabled={miniGameBusy}>
+                              Lock Wager
+                            </button>
+                          </div>
                         )}
                       </div>
                       {CHAIN_MODE === "evm" && !miniGameEscrowReady && (
@@ -11860,6 +12511,18 @@ export default function App() {
                         </div>
                       )}
                       {miniGameUiMessage && <div className="xp-success">{miniGameUiMessage}</div>}
+                    </div>
+                  )}
+
+                  {miniGameMatch.status === "revealing" && miniGameMatch.game_type === "bigbank" && (
+                    <div className="xp-minigame-stage xp-minigame-reveal-stage">
+                      <div className="xp-minigame-reveal-orb">
+                        <span>{Math.max(1, Math.ceil(miniGameRevealRemaining / 1000))}</span>
+                      </div>
+                      <div className="xp-minigame-countdown">Revealing wagers...</div>
+                      <div className="xp-minigame-sub">
+                        Both deposits are locked. Amounts stay hidden until the reveal finishes.
+                      </div>
                     </div>
                   )}
 
@@ -11911,7 +12574,7 @@ export default function App() {
                       {miniGameWinner?.id === user?.id && miniGameMatch.status === "ended" && (
                         <div className="xp-button-row">
                           <button className="xp-button" onClick={() => setMiniGameClaimOpen(true)}>
-                            Claim Winnings
+                            Claim ur win
                           </button>
                           <button className="xp-button" onClick={prepareMiniGameRematch}>
                             Rematch
@@ -11963,7 +12626,7 @@ export default function App() {
         <div className="xp-modal-overlay xp-call-overlay" onClick={() => setMiniGameClaimOpen(false)}>
           <div className="xp-modal xp-blackjack-claim" onClick={(e) => e.stopPropagation()}>
             <div className="xp-modal-title">
-              <span>Claim Mini Game Winnings</span>
+              <span>Claim ur win</span>
               <button className="xp-modal-close" onClick={() => setMiniGameClaimOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
@@ -12002,7 +12665,7 @@ export default function App() {
         <div className="xp-modal-overlay xp-call-overlay" onClick={() => setBlackjackClaimOpen(false)}>
           <div className="xp-modal xp-blackjack-claim" onClick={(e) => e.stopPropagation()}>
             <div className="xp-modal-title">
-              <span>Claim Winnings</span>
+              <span>Claim ur win</span>
               <button className="xp-modal-close" onClick={() => setBlackjackClaimOpen(false)}>x</button>
             </div>
             <div className="xp-modal-body">
@@ -12055,9 +12718,20 @@ export default function App() {
                     className={`xp-wallet-option ${blackjackWalletProviderId === option.id ? "active" : ""}`}
                     onClick={() => chooseBlackjackWallet(option)}
                   >
-                    <div className="xp-wallet-option-title">{option.label}</div>
-                    <div className="xp-wallet-option-sub">
-                      {option.type === "walletconnect" ? "Mobile and desktop wallets" : "Browser extension / injected wallet"}
+                    <div className="xp-wallet-option-iconwrap">
+                      {option.icon ? (
+                        <img className="xp-wallet-option-icon" src={option.icon} alt="" />
+                      ) : (
+                        <div className="xp-wallet-option-fallback" aria-hidden="true">
+                          {option.label.slice(0, 1)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="xp-wallet-option-copy">
+                      <div className="xp-wallet-option-title">{option.label}</div>
+                      <div className="xp-wallet-option-sub">
+                        {option.type === "walletconnect" ? "Mobile and desktop wallets" : "Browser extension / injected wallet"}
+                      </div>
                     </div>
                   </button>
                 ))}
