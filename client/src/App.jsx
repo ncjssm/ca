@@ -7452,6 +7452,28 @@ export default function App() {
     if (!user?.id || !blackjackWalletProviderId) return;
     localStorage.setItem(`xp-wallet-provider:${user.id}`, blackjackWalletProviderId);
   }, [user?.id, blackjackWalletProviderId]);
+
+  const getBlackjackHandValue = (cards = []) => {
+    let total = 0;
+    let aces = 0;
+    cards.forEach((card) => {
+      const rank = String(card || "").slice(0, -1);
+      if (rank === "A") {
+        total += 11;
+        aces += 1;
+      } else if (rank === "K" || rank === "Q" || rank === "J" || rank === "10") {
+        total += 10;
+      } else {
+        total += Number(rank || 0);
+      }
+    });
+    while (total > 21 && aces > 0) {
+      total -= 10;
+      aces -= 1;
+    }
+    return total;
+  };
+
   const renderBjCard = (card, idx, hidden = false) => {
     const rank = card?.slice(0, -1) || "";
     const suit = card?.slice(-1) || "";
@@ -12181,7 +12203,14 @@ export default function App() {
                   {(blackjackMatch.status === "active" || blackjackMatch.status === "ended" || blackjackMatch.status === "settled") && (
                     <div className="xp-blackjack-table">
                       <div className="xp-blackjack-dealer">
-                        <div className="xp-blackjack-name">Dealer</div>
+                        <div className="xp-blackjack-name">
+                          Dealer
+                          {blackjackState?.dealer?.status === "reveal" && (
+                            <span className="xp-blackjack-hand-total">
+                              {getBlackjackHandValue(blackjackState?.dealer?.cards || [])}
+                            </span>
+                          )}
+                        </div>
                         <div className="xp-blackjack-cards">
                           {(blackjackState?.dealer?.cards || []).map((card, idx) =>
                             renderBjCard(card, idx, blackjackState?.dealer?.status !== "reveal" && idx === 1)
@@ -12217,6 +12246,9 @@ export default function App() {
                                   <div key={`${p.user_id}-hand-${handIdx}`} className="xp-blackjack-hand">
                                     <div className="xp-blackjack-hand-label">
                                       Hand {handIdx + 1} · {hand.status}
+                                      <span className="xp-blackjack-hand-total">
+                                        {getBlackjackHandValue(hand.cards || [])}
+                                      </span>
                                     </div>
                                     <div className="xp-blackjack-hand-cards">
                                       {hand.cards.map((card, idx) => renderBjCard(card, idx))}

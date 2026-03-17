@@ -6897,7 +6897,7 @@ body {
 
 .xp-blackjack-room {
   display: grid;
-  gap: 16px;
+  gap: 10px;
 }
 
 .xp-blackjack-header {
@@ -6905,6 +6905,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-top: -4px;
 }
 
 .xp-blackjack-title {
@@ -7402,6 +7403,24 @@ body {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.75);
   text-transform: capitalize;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.xp-blackjack-hand-total {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .xp-blackjack-hand-cards {
@@ -7511,7 +7530,7 @@ body {
 .xp-game-audio-strip {
   display: flex;
   justify-content: flex-end;
-  margin-bottom: 14px;
+  margin-bottom: 2px;
 }
 
 .xp-game-audio-toggle {
