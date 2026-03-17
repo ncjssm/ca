@@ -3351,6 +3351,13 @@ export default function App() {
     setNotifications(data.notifications || []);
   }
 
+  const miniGameCountdownRemaining = miniGameMatch?.state?.countdownEndsAt
+    ? Math.max(0, new Date(miniGameMatch.state.countdownEndsAt).getTime() - gameUiNow)
+    : 0;
+  const miniGameRevealRemaining = miniGameMatch?.state?.revealEndsAt
+    ? Math.max(0, new Date(miniGameMatch.state.revealEndsAt).getTime() - gameUiNow)
+    : 0;
+
   useEffect(() => {
     const timer = setInterval(() => {
       setNotificationNow(Date.now());
@@ -7299,12 +7306,6 @@ export default function App() {
     (sum, p) => sum + Number(p.deposited_amount || p.deposit_amount || 0),
     0
   );
-  const miniGameCountdownRemaining = miniGameMatch?.state?.countdownEndsAt
-    ? Math.max(0, new Date(miniGameMatch.state.countdownEndsAt).getTime() - gameUiNow)
-    : 0;
-  const miniGameRevealRemaining = miniGameMatch?.state?.revealEndsAt
-    ? Math.max(0, new Date(miniGameMatch.state.revealEndsAt).getTime() - gameUiNow)
-    : 0;
   const miniGameHideLockedAmounts =
     miniGameMatch?.game_type === "bigbank" &&
     miniGameMatch?.status !== "ended" &&
