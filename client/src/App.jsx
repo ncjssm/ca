@@ -572,6 +572,23 @@ function isStoryMessageType(type) {
   return type === "story_reply" || type === "story_share";
 }
 
+function sanitizeNumericInput(value) {
+  const raw = String(value ?? "");
+  let out = "";
+  let sawDot = false;
+  for (const ch of raw) {
+    if (ch >= "0" && ch <= "9") {
+      out += ch;
+      continue;
+    }
+    if (ch === "." && !sawDot) {
+      out += ch;
+      sawDot = true;
+    }
+  }
+  return out;
+}
+
 function getDisplayName(user) {
   if (!user) return "";
   return (user.display_name || "").trim() || user.username;
@@ -2948,7 +2965,13 @@ export default function App() {
     if (!audio) return;
     if (shouldPlayGameMusic) {
       audio.currentTime = audio.paused ? 0 : audio.currentTime;
-      audio.play().catch(() => {});
+      audio.play().catch(() => {
+        const retry = () => {
+          audio.play().catch(() => {});
+          window.removeEventListener("pointerdown", retry);
+        };
+        window.addEventListener("pointerdown", retry, { once: true });
+      });
       fadeGameMusic(0.24, 520);
     } else {
       stopGameAudioPlayback();
@@ -7398,7 +7421,19 @@ export default function App() {
       <button
         className={`xp-button xp-game-audio-toggle ${gameAudioMuted ? "muted" : ""}`}
         type="button"
-        onClick={() => setGameAudioMuted((prev) => !prev)}
+        onClick={() =>
+          setGameAudioMuted((prev) => {
+            const next = !prev;
+            if (!next) {
+              const audio = gameMusicAudioRef.current;
+              if (audio) {
+                audio.currentTime = 0;
+                audio.play().catch(() => {});
+              }
+            }
+            return next;
+          })
+        }
       >
         {gameAudioMuted ? "Unmute" : "Mute"}
       </button>
@@ -11964,14 +11999,13 @@ export default function App() {
                       <label>
                         Wager
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
+                          type="text"
                           inputMode="decimal"
+                          pattern="[0-9]*[.]?[0-9]*"
                           placeholder="Example: 10"
                           value={blackjackInvite.wager}
                           onChange={(e) =>
-                            setBlackjackInvite((prev) => ({ ...prev, wager: e.target.value }))
+                            setBlackjackInvite((prev) => ({ ...prev, wager: sanitizeNumericInput(e.target.value) }))
                           }
                         />
                         <small>Each player deposits this same amount.</small>
@@ -12011,7 +12045,10 @@ export default function App() {
 
               {blackjackMatch && (
                 <div className="xp-blackjack-room">
-                  {(blackjackMatch.status === "active" || blackjackMatch.status === "ended" || blackjackMatch.status === "settled") &&
+                  {(blackjackMatch.status === "deposit" ||
+                    blackjackMatch.status === "active" ||
+                    blackjackMatch.status === "ended" ||
+                    blackjackMatch.status === "settled") &&
                     renderGameAudioStrip("casino")}
                   <div className="xp-blackjack-header">
                     <div>
@@ -12327,14 +12364,13 @@ export default function App() {
                       <label>
                         Wager
                         <input
-                          type="number"
-                          min="0"
-                          step="0.01"
+                          type="text"
                           inputMode="decimal"
+                          pattern="[0-9]*[.]?[0-9]*"
                           placeholder="Example: 10"
                           value={miniGameInvite.wager}
                           onChange={(e) =>
-                            setMiniGameInvite((prev) => ({ ...prev, wager: e.target.value }))
+                            setMiniGameInvite((prev) => ({ ...prev, wager: sanitizeNumericInput(e.target.value) }))
                           }
                         />
                         <small>
@@ -12378,7 +12414,9 @@ export default function App() {
 
               {miniGameMatch && (
                 <div className="xp-minigame-room">
-                  {(miniGameMatch.status === "active" ||
+                  {(miniGameMatch.status === "deposit" ||
+                    miniGameMatch.status === "revealing" ||
+                    miniGameMatch.status === "active" ||
                     miniGameMatch.status === "ended" ||
                     miniGameMatch.status === "settled") &&
                     renderGameAudioStrip(miniGameMatch?.game_type === "coinflip" ? "coinflip" : "casino")}
@@ -12473,8 +12511,11 @@ export default function App() {
                         <label>
                           {miniGameMatch.game_type === "coinflip" ? "Required amount" : "Your deposit"}
                           <input
+                            type="text"
+                            inputMode="decimal"
+                            pattern="[0-9]*[.]?[0-9]*"
                             value={miniGameMatch.game_type === "coinflip" ? String(miniGameMatch.wager_amount) : miniGameDepositAmount}
-                            onChange={(e) => setMiniGameDepositAmount(e.target.value)}
+                            onChange={(e) => setMiniGameDepositAmount(sanitizeNumericInput(e.target.value))}
                             disabled={miniGameMatch.game_type === "coinflip"}
                           />
                         </label>
