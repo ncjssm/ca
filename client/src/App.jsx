@@ -872,7 +872,7 @@ export default function App() {
   const [primarySwitching, setPrimarySwitching] = useState(false);
   const [transferModal, setTransferModal] = useState(null);
   const [transferError, setTransferError] = useState("");
-  const [transferSuccess, setTransferSuccess] = useState("");
+  const [transferToast, setTransferToast] = useState("");
   const [removeAliasModal, setRemoveAliasModal] = useState(null);
   const [aliasTransfering, setAliasTransfering] = useState(false);
   const [aliasRemoving, setAliasRemoving] = useState(false);
@@ -6786,7 +6786,7 @@ export default function App() {
   async function transferAlias(username, toUsername, password) {
     setAliasTransfering(true);
     setTransferError("");
-    setTransferSuccess("");
+    setTransferToast("");
     try {
       const cleanTo = (toUsername || "").trim();
       const cleanPass = password || "";
@@ -6799,14 +6799,9 @@ export default function App() {
       });
       await new Promise((r) => setTimeout(r, 280));
       await loadUsernames();
-      setTransferSuccess(`Transfer request sent to @${cleanTo}`);
-      setTransferModal((prev) => (prev ? { ...prev, password: "" } : prev));
-      setTimeout(() => {
-        closeModalWithAnim("transfer", () => {
-          setTransferModal(null);
-          setTransferSuccess("");
-        });
-      }, 1100);
+      closeModalWithAnim("transfer", () => setTransferModal(null));
+      setTransferToast(`@${username} transfer request sent to @${cleanTo}`);
+      setTimeout(() => setTransferToast(""), 2200);
     } catch (err) {
       setTransferError(err.message || "Transfer failed");
     } finally {
@@ -7598,6 +7593,7 @@ export default function App() {
 
   return (
     <div className="xp-desktop">
+      {transferToast && <div className="xp-toast xp-toast-success">{transferToast}</div>}
       {theme === "custom" && customThemeMedia && (
         <div className="xp-custom-bg">
           {customThemeMedia.type === "video" ? (
@@ -10291,7 +10287,7 @@ export default function App() {
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button className="xp-context-item" onClick={() => { setPrimaryModal({ username: aliasMenuOpen.username }); setPrimaryError(""); setPrimaryPassword(""); setAliasMenuOpen(null); }}>Set primary</button>
-                  <button className="xp-context-item" onClick={() => { setTransferError(""); setTransferSuccess(""); setTransferModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Transfer</button>
+                  <button className="xp-context-item" onClick={() => { setTransferError(""); setTransferToast(""); setTransferModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Transfer</button>
                   <button className="xp-context-item danger" onClick={() => { setRemoveAliasModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Remove</button>
                 </div>
               )}
@@ -10806,12 +10802,12 @@ export default function App() {
       {transferModal && (
         <div
           className={`xp-modal-overlay ${closingModals.transfer ? "closing" : ""}`}
-          onClick={() => closeModalWithAnim("transfer", () => { setTransferModal(null); setTransferSuccess(""); })}
+          onClick={() => closeModalWithAnim("transfer", () => setTransferModal(null))}
         >
           <div className={`xp-modal ${closingModals.transfer ? "closing" : ""}`} onClick={(e) => e.stopPropagation()}>
             <div className="xp-modal-title">
               <span>Transfer @{transferModal.username}</span>
-              <button className="xp-modal-close" onClick={() => closeModalWithAnim("transfer", () => { setTransferModal(null); setTransferSuccess(""); })}>x</button>
+              <button className="xp-modal-close" onClick={() => closeModalWithAnim("transfer", () => setTransferModal(null))}>x</button>
             </div>
             <div className="xp-modal-body">
               <label>
@@ -10832,7 +10828,6 @@ export default function App() {
                 />
               </label>
               {transferError && <div className="xp-error">{transferError}</div>}
-              {transferSuccess && <div className="xp-success">{transferSuccess}</div>}
               <div className="xp-button-row">
                 <button
                   className="xp-button"
@@ -10843,7 +10838,7 @@ export default function App() {
                 >
                   {aliasTransfering ? "Transferring..." : "Transfer"}
                 </button>
-                <button className="xp-button" onClick={() => closeModalWithAnim("transfer", () => { setTransferModal(null); setTransferSuccess(""); })}>Cancel</button>
+                <button className="xp-button" onClick={() => closeModalWithAnim("transfer", () => setTransferModal(null))}>Cancel</button>
               </div>
             </div>
           </div>
