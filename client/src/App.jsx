@@ -8227,7 +8227,17 @@ export default function App() {
                             <div className="xp-theme-panel" />
                             <div className="xp-theme-panel small" />
                           </div>
-                          <span>{t === "kawaii" ? "Cute" : t === "custom" ? "Custom" : t}</span>
+                          <span>
+                            {t === "kawaii"
+                              ? "Cute"
+                              : t === "custom"
+                              ? "Custom"
+                              : t === "classic"
+                              ? "Classic"
+                              : t === "olive"
+                              ? "Olive"
+                              : t}
+                          </span>
                         </button>
                       ))}
                     </div>
