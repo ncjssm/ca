@@ -4628,7 +4628,7 @@ body {
   padding: 0;
 }
 
-.xp-message-bubble:has(.xp-story-message-card) {
+.xp-message-bubble.story {
   border: 0;
   background: transparent;
   box-shadow: none;

@@ -8566,7 +8566,7 @@ export default function App() {
                               @{selectedGroup?.members?.find((m) => m.id === msg.sender_id)?.username || "user"}
                             </button>
                           )}
-                          <div className={`xp-message-bubble ${msg.type === "audio" ? "audio" : ""}`}>
+                          <div className={`xp-message-bubble ${msg.type === "audio" ? "audio" : ""} ${isStoryMessageType(msg.type) ? "story" : ""}`}>
                             {(msg.forwarded_from_username || msg.forwarded_from_id) && (
                               <div className="xp-forwarded-label">
                                 Forwarded · {msg.forwarded_from_display || msg.forwarded_from_username || getUserById(msg.forwarded_from_id)?.username || ""}
