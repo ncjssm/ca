@@ -3512,10 +3512,13 @@ export default function App() {
     setStoryShareOpen(false);
     setStoryShareSearch("");
     const current = stories[userIndex]?.stories?.[storyIndex];
+    const storyOwnerId = stories[userIndex]?.user?.id;
     if (current) {
-      await apiFetch(`/api/stories/${current.id}/view`, { method: "POST" }).catch(() => {});
+      if (Number(storyOwnerId) !== Number(user?.id)) {
+        await apiFetch(`/api/stories/${current.id}/view`, { method: "POST" }).catch(() => {});
+      }
       lastStoryViewedRef.current = current.id;
-      markStoryViewedForUser(stories[userIndex]?.user?.id);
+      markStoryViewedForUser(storyOwnerId);
       setStories((prev) =>
         prev.map((u, idx) =>
           idx === userIndex
@@ -7285,6 +7288,10 @@ export default function App() {
   const profileStory = profileUser ? stories.find((s) => s.user?.id === profileUser.id) : null;
   const profileHasStory = Boolean(profileStory?.stories?.length);
   const profileHasUnviewed = Boolean(profileStory?.has_unviewed);
+  const ownStoryIndex = stories.findIndex((s) => Number(s.user?.id) === Number(user?.id));
+  const ownStoryEntry = ownStoryIndex !== -1 ? stories[ownStoryIndex] : null;
+  const ownHasStory = Boolean(ownStoryEntry?.stories?.length);
+  const ownHasUnviewedStory = Boolean(ownStoryEntry?.has_unviewed || ownStoryEntry?.has_unviewed_story);
   const profileSong = profileUser ? extractProfileSong(profileUser) : null;
   const profileSongHasAudio = !!profileSong?.audioUrl;
   const profileSongIsPlaying =
@@ -7619,12 +7626,11 @@ export default function App() {
                 <div className="xp-avatar-status-row">
                   <div className="xp-story-wrap">
                     <button
-                      className={`xp-story-ring ${stories.some((s) => s.user?.id === user.id && s.has_unviewed) ? "active" : ""}`}
+                      className={`xp-story-ring ${ownHasStory ? "active" : ""} ${ownHasStory && !ownHasUnviewedStory ? "viewed" : ""}`}
                       type="button"
                       onClick={() => {
-                        const index = stories.findIndex((s) => s.user?.id === user.id);
-                        if (index !== -1) {
-                          viewStory(index, 0);
+                        if (ownStoryIndex !== -1) {
+                          viewStory(ownStoryIndex, 0);
                         }
                       }}
                     >
@@ -7637,7 +7643,10 @@ export default function App() {
                     <button
                       type="button"
                       className="xp-story-add"
-                      onClick={() => storyInputRef.current?.click()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        storyInputRef.current?.click();
+                      }}
                     >
                       +
                     </button>
