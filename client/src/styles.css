@@ -2907,8 +2907,21 @@ body {
   width: 40px;
   height: 40px;
   padding: 0;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.xp-story-send .xp-icon,
+.xp-story-forward .xp-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
+.xp-story-send .xp-icon {
+  transform: translateX(-1px);
 }
 
 .story-viewers-overlay {
