@@ -875,6 +875,11 @@ function createDeck() {
   BJ_SUITS.forEach((suit) => {
     BJ_RANKS.forEach((rank) => deck.push(`${rank}${suit}`));
   });
+  // Add a second pass of lower cards so rounds breathe a bit more while
+  // keeping both players on the exact same randomized shoe.
+  BJ_SUITS.forEach((suit) => {
+    ["2", "3", "4", "5", "6", "7"].forEach((rank) => deck.push(`${rank}${suit}`));
+  });
   return deck;
 }
 
