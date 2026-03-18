@@ -7160,6 +7160,17 @@ export default function App() {
             @{name}
           </button>
         );
+      } else if (handlers.loadProfileByAlias) {
+        parts.push(
+          <button
+            key={`${start}-${name}`}
+            type="button"
+            className="xp-mention"
+            onClick={() => handlers.loadProfileByAlias(name)}
+          >
+            @{name}
+          </button>
+        );
       } else {
         parts.push(text.slice(start, end));
       }
@@ -7841,7 +7852,7 @@ export default function App() {
                         return (
                           <>
                       <div className="xp-notification-text">
-                        {renderNotificationText(n, { selectGroup, loadProfile })}
+                        {renderNotificationText(n, { selectGroup, loadProfile, loadProfileByAlias })}
                       </div>
                       <div className="xp-notification-actions">
                         {n.context === "group" && n.group_id && n.type !== "group_invite" && (
