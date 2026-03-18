@@ -4757,6 +4757,19 @@ body {
   color: #5f7084;
 }
 
+.xp-story-message-reply {
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-left: 3px solid rgba(56, 107, 194, 0.72);
+  border-radius: 9px;
+  background: rgba(232, 238, 246, 0.9);
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .xp-audio-shell {
   display: flex;
   align-items: center;

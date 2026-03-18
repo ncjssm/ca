@@ -8602,6 +8602,9 @@ export default function App() {
                                       : `@${selectedFriend?.username || "user"} shared a story`}
                                   </div>
                                   <div className="xp-story-message-cta">Tap to view story</div>
+                                  {msg.type === "story_reply" && (msg.body || "").trim() && (
+                                    <div className="xp-story-message-reply">{msg.body}</div>
+                                  )}
                                 </div>
                               </button>
                             )}
@@ -8677,7 +8680,11 @@ export default function App() {
                                 />
                               </div>
                             )}
-                            {!msg.is_system && !isImageType(msg.type) && !isAudioType(msg.type) && msg.type !== "story_share" && (
+                            {!msg.is_system &&
+                              !isImageType(msg.type) &&
+                              !isAudioType(msg.type) &&
+                              msg.type !== "story_share" &&
+                              msg.type !== "story_reply" && (
                               <div className="xp-message-text">
                                 {editingMessageId === msg.id ? (
                                   <input
