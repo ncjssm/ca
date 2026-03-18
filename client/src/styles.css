@@ -2672,6 +2672,21 @@ body {
   gap: 6px;
 }
 
+.xp-story-actions .xp-button {
+  width: 36px;
+  height: 34px;
+  min-width: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+
+.xp-story-actions .xp-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
 .xp-story-toggle .xp-icon {
   width: 14px;
   height: 14px;
@@ -2796,41 +2811,6 @@ body {
   justify-content: center;
 }
 
-.xp-story-user-chip {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.38);
-  border-radius: 999px;
-  background: rgba(17, 24, 39, 0.42);
-  color: #ffffff;
-  backdrop-filter: blur(8px);
-}
-
-.xp-story-user-chip img {
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  object-fit: cover;
-  border: 1px solid rgba(255, 255, 255, 0.45);
-}
-
-.xp-story-user-name {
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.1;
-}
-
-.xp-story-user-sub {
-  font-size: 11px;
-  opacity: 0.84;
-}
-
 .xp-story-tapzones {
   position: absolute;
   inset: 0;
@@ -2924,6 +2904,7 @@ body {
 .xp-story-send,
 .xp-story-forward {
   min-width: 40px;
+  width: 40px;
   height: 40px;
   padding: 0;
   display: grid;
@@ -4702,25 +4683,26 @@ body {
 
 .xp-story-message-card {
   display: grid;
-  grid-template-columns: 84px 1fr;
-  gap: 10px;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
   align-items: center;
-  width: min(280px, 100%);
-  margin-bottom: 8px;
-  padding: 8px;
-  border: 1px solid rgba(145, 160, 182, 0.55);
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 247, 252, 0.94));
+  width: min(248px, 100%);
+  margin-bottom: 4px;
+  padding: 10px;
+  border: 1px solid rgba(166, 179, 197, 0.42);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 252, 0.96));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
   text-align: left;
 }
 
 .xp-story-message-media {
-  width: 84px;
-  height: 108px;
+  width: 72px;
+  height: 72px;
   overflow: hidden;
-  border-radius: 10px;
-  border: 1px solid rgba(23, 50, 99, 0.15);
-  background: #eef2f8;
+  border-radius: 14px;
+  border: 1px solid rgba(23, 50, 99, 0.12);
+  background: #f2f5fa;
 }
 
 .xp-story-message-media img,
@@ -4733,18 +4715,19 @@ body {
 
 .xp-story-message-copy {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .xp-story-message-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--xp-text);
+  line-height: 1.2;
 }
 
 .xp-story-message-cta {
-  font-size: 11px;
-  color: var(--xp-muted);
+  font-size: 12px;
+  color: #5f7084;
 }
 
 .xp-audio-shell {

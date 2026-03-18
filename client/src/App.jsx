@@ -704,6 +704,7 @@ export default function App() {
   const [allUsers, setAllUsers] = useState([]);
   const [customStatusById, setCustomStatusById] = useState({});
   const [selectedChat, setSelectedChat] = useState(null);
+  const selectedChatRef = useRef(null);
   const [manualDmUsers, setManualDmUsers] = useState([]);
   const manualDmUsersRef = useRef([]);
   const [mutedChats, setMutedChats] = useState({});
@@ -1391,6 +1392,10 @@ export default function App() {
   }, [callState]);
 
   useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
+
+  useEffect(() => {
     groupCallRef.current = groupCall;
   }, [groupCall]);
 
@@ -1593,7 +1598,10 @@ export default function App() {
       });
       if (message.sender_id !== user.id) {
         reopenDM(otherUserId).catch(() => {});
-        if (!isChatMutedLive(key)) {
+        const activeChat = selectedChatRef.current;
+        const viewingSameDm =
+          activeChat?.type === "dm" && Number(activeChat.id) === Number(otherUserId);
+        if (!viewingSameDm && !isChatMutedLive(key)) {
           markChatUnread(key);
           playMessageAlert();
         }
@@ -10980,23 +10988,6 @@ export default function App() {
             </div>
             <div className="xp-story-body">
               <div className="xp-story-media-wrap">
-                {activeStoryUser && (
-                  <button
-                    className="xp-story-user-chip"
-                    type="button"
-                    onClick={() => loadProfile(activeStoryUser.id)}
-                  >
-                    <img
-                      src={avatarUrl(activeStoryUser.avatar, activeStoryUser.username)}
-                      alt=""
-                      onError={(e) => onAvatarError(e, activeStoryUser.username)}
-                    />
-                    <div>
-                      <div className="xp-story-user-name">@{activeStoryUser.username}</div>
-                      <div className="xp-story-user-sub">{activeStoryUser.display_name || activeStoryUser.username}</div>
-                    </div>
-                  </button>
-                )}
                 {(() => {
                   const current = activeStory;
                   if (!current) return null;
