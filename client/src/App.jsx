@@ -5187,7 +5187,9 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ username: searchValue }),
       });
-      if (targetUser) ensureFriendCard(targetUser);
+      setPendingFriendIds((prev) =>
+        targetUser?.id ? Array.from(new Set([...prev, Number(targetUser.id)])) : prev
+      );
       setFriendSuccess(`Friend request sent to @${searchValue}`);
       setFriendSearch("");
       loadChats();
