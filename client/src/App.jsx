@@ -8428,12 +8428,13 @@ export default function App() {
                             setAddMembersModal(selectedChat.id);
                             setAddMembersSelected({});
                           }}
+                          title="Add members"
                         >
                           <svg viewBox="0 0 24 24" className="xp-icon" aria-hidden="true">
-                            <circle cx="9" cy="8" r="4" fill="currentColor" />
-                            <path d="M2.5 20c0-4 3.2-7.2 7.2-7.2h1.8" fill="none" stroke="currentColor" strokeWidth="2" />
-                            <circle cx="18" cy="14" r="4" fill="none" stroke="currentColor" strokeWidth="2" />
-                            <path d="M18 12.6v2.8M16.6 14h2.8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            <circle cx="9" cy="8" r="3" fill="none" stroke="currentColor" strokeWidth="2" />
+                            <path d="M4.5 18.5c.6-2.9 2.9-4.8 5.5-4.8 1.5 0 2.8.4 3.8 1.2" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            <circle cx="16.5" cy="10" r="2.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                            <path d="M16.5 14.6v5.4M13.8 17.3h5.4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                           </svg>
                         </button>
                       </>
