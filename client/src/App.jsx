@@ -10275,13 +10275,13 @@ export default function App() {
               </div>
               {aliasMenuOpen && (
                 <div
-                  className="xp-alias-menu-float"
+                  className="xp-context-menu xp-alias-menu-float"
                   style={{ left: aliasMenuOpen.x, top: aliasMenuOpen.y }}
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button className="xp-button" onClick={() => { setPrimaryModal({ username: aliasMenuOpen.username }); setPrimaryError(""); setPrimaryPassword(""); setAliasMenuOpen(null); }}>Set primary</button>
-                  <button className="xp-button" onClick={() => { setTransferModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Transfer</button>
-                  <button className="xp-button" onClick={() => { setRemoveAliasModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Remove</button>
+                  <button className="xp-context-item" onClick={() => { setPrimaryModal({ username: aliasMenuOpen.username }); setPrimaryError(""); setPrimaryPassword(""); setAliasMenuOpen(null); }}>Set primary</button>
+                  <button className="xp-context-item" onClick={() => { setTransferModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Transfer</button>
+                  <button className="xp-context-item danger" onClick={() => { setRemoveAliasModal({ username: aliasMenuOpen.username }); setAliasMenuOpen(null); }}>Remove</button>
                 </div>
               )}
               {aliasData?.incoming?.length > 0 && (
