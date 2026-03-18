@@ -4628,6 +4628,13 @@ body {
   padding: 0;
 }
 
+.xp-message-bubble:has(.xp-story-message-card) {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
 .xp-message-bubble.audio .xp-forwarded-label {
   margin-bottom: 6px;
 }
