@@ -6793,7 +6793,7 @@ export default function App() {
       }
       await apiFetch("/api/usernames/transfer", {
         method: "POST",
-        body: JSON.stringify({ username, toUsername: cleanTo, password: cleanPass }),
+        body: JSON.stringify({ username, recipient: cleanTo, password: cleanPass }),
       });
       await new Promise((r) => setTimeout(r, 280));
       await loadUsernames();
