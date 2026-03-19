@@ -7138,6 +7138,63 @@ export default function App() {
       const amount = payload?.pot ? `${Number(payload.pot).toFixed(2)} ${payload.token || "USDC"}` : "your winnings";
       return `${winner} has won ${amount}.`;
     }
+    if (n?.type === "username_transfer") {
+      const transferUsername = payload?.username || payload?.transfer_username || payload?.alias || "";
+      return (
+        <>
+          {n.from_username ? (
+            <button
+              type="button"
+              className="xp-mention"
+              onClick={() => handlers.loadProfile?.(n.from_user_id)}
+            >
+              @{n.from_username}
+            </button>
+          ) : null}{" "}
+          wants to transfer{" "}
+          {transferUsername ? (
+            <button
+              type="button"
+              className="xp-mention"
+              onClick={() => handlers.loadProfileByAlias?.(transferUsername)}
+            >
+              @{transferUsername}
+            </button>
+          ) : (
+            "@user"
+          )}{" "}
+          to you
+        </>
+      );
+    }
+    if (n?.type === "username_transfer_accept" || n?.type === "username_transfer_accepted") {
+      const transferUsername = payload?.username || payload?.transfer_username || payload?.alias || "";
+      return (
+        <>
+          {n.from_username ? (
+            <button
+              type="button"
+              className="xp-mention"
+              onClick={() => handlers.loadProfile?.(n.from_user_id)}
+            >
+              @{n.from_username}
+            </button>
+          ) : null}{" "}
+          accepted{" "}
+          {transferUsername ? (
+            <button
+              type="button"
+              className="xp-mention"
+              onClick={() => handlers.loadProfileByAlias?.(transferUsername)}
+            >
+              @{transferUsername}
+            </button>
+          ) : (
+            "@user"
+          )}
+        </>
+      );
+    }
     const from = (n?.from_username || "").toLowerCase();
     if (!from) return text;
     const parts = [];
@@ -10323,7 +10380,15 @@ export default function App() {
                 <div className="xp-transfer-list">
                   {aliasData.incoming.map((t) => (
                     <div key={t.id} className="xp-transfer-row">
-                      <div>@{t.from_username} wants to transfer @{t.username}</div>
+                      <div>
+                        <button className="xp-mention" type="button" onClick={() => loadProfile(t.from_user_id)}>
+                          @{t.from_username}
+                        </button>{" "}
+                        wants to transfer{" "}
+                        <button className="xp-mention" type="button" onClick={() => loadProfileByAlias(t.username)}>
+                          @{t.username}
+                        </button>
+                      </div>
                       <div className="xp-transfer-actions">
                         <button className="xp-button" onClick={() => acceptTransfer(t.id)}>Accept</button>
                         <button className="xp-button" onClick={() => denyTransfer(t.id)}>Decline</button>
