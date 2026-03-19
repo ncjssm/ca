@@ -807,6 +807,7 @@ export default function App() {
   const [miniGameError, setMiniGameError] = useState("");
   const [miniGameBusy, setMiniGameBusy] = useState(false);
   const [miniGameDepositAmount, setMiniGameDepositAmount] = useState("10");
+  const [miniGameSideChoice, setMiniGameSideChoice] = useState("heads");
   const [miniGameClaimOpen, setMiniGameClaimOpen] = useState(false);
   const [miniGameClaimAddress, setMiniGameClaimAddress] = useState("");
   const [miniGameClaimNotificationId, setMiniGameClaimNotificationId] = useState(null);
@@ -1828,10 +1829,16 @@ export default function App() {
         remoteStreamRef.current = null;
         const audio = document.getElementById("xp-remote-audio");
         if (audio) audio.srcObject = null;
+        setDmShareStream(null);
         setRemotePresent(false);
         teardownPeer();
       }
       playCallChime("leave");
+    });
+
+    socket.on("call:screen:stop", ({ fromId }) => {
+      if (fromId !== callStateRef.current?.withUserId) return;
+      setDmShareStream(null);
     });
 
     socket.on("call:offer", async ({ fromId, offer }) => {
@@ -3109,6 +3116,26 @@ export default function App() {
   }, [miniGameHubOpen, miniGameMatch?.id, miniGameMatch?.status]);
 
   useEffect(() => {
+    if (miniGameMatch?.game_type !== "coinflip" || !user?.id) return;
+    const assignments = miniGameMatch.state?.assignments || {};
+    const mine = assignments[user.id];
+    const opponentTaken = Object.entries(assignments).find(
+      ([id, side]) => Number(id) !== Number(user.id) && (side === "heads" || side === "tails")
+    )?.[1];
+    if (mine === "heads" || mine === "tails") {
+      setMiniGameSideChoice(mine);
+      return;
+    }
+    if (opponentTaken === "heads") {
+      setMiniGameSideChoice("tails");
+      return;
+    }
+    if (opponentTaken === "tails") {
+      setMiniGameSideChoice("heads");
+    }
+  }, [miniGameMatch?.game_type, miniGameMatch?.status, miniGameMatch?.state, user?.id]);
+
+  useEffect(() => {
     setMentionMenu(null);
     setMentionIndex(0);
   }, [selectedChat?.type, selectedChat?.id]);
@@ -3813,9 +3840,7 @@ export default function App() {
     };
 
     pc.onnegotiationneeded = () => {
-      if (callStateRef.current?.withUserId) {
-        createOffer(callStateRef.current.withUserId);
-      }
+      // Direct call renegotiation is driven explicitly to avoid glare on first connect.
     };
 
     pc.onsignalingstatechange = () => {
@@ -3899,14 +3924,7 @@ export default function App() {
       }
     };
 
-    if (rawMicStreamRef.current) {
-      rawMicStreamRef.current.getTracks().forEach((t) => t.stop());
-    }
-    const mic = await navigator.mediaDevices.getUserMedia({
-      audio: getHiFiAudioConstraints(callSettings.inputId),
-    });
-    rawMicStreamRef.current = mic;
-    await rebuildAudioGraph(mic);
+    await ensureProcessedMic();
     const processed = localStreamRef.current;
     const outTrack = processed?.getAudioTracks?.()[0];
     if (outTrack && processed) {
@@ -3918,7 +3936,6 @@ export default function App() {
         pc.addTrack(outTrack, processed);
       }
     }
-    createOffer(otherId);
     setAudioStreamTick((n) => n + 1);
   }
 
@@ -4092,7 +4109,7 @@ export default function App() {
       open: true,
       label: label || prev.label || "Screen Share",
       minimized: false,
-      maximized: prev.maximized,
+      maximized: false,
     }));
   }
 
@@ -4173,7 +4190,6 @@ export default function App() {
 
   async function startCall(otherId) {
     callEndedRef.current = false;
-    await ensurePeer(otherId);
     socketRef.current?.emit("call:request", { toId: otherId });
     setCallState({ status: "calling", withUserId: otherId, startTime: null, muted: false, deafened: false });
     setCallAudioStates({});
@@ -4195,7 +4211,6 @@ export default function App() {
     if (!incomingCall) return;
     const fromId = incomingCall.fromId;
     callEndedRef.current = false;
-    await ensurePeer(fromId);
     socketRef.current?.emit("call:accept", { toId: fromId });
     setIncomingCall(null);
   }
@@ -4693,6 +4708,7 @@ export default function App() {
       if (pcRef.current) {
         await createOffer(callState.withUserId);
       }
+      socketRef.current?.emit("call:screen:start", { toId: callState.withUserId });
     } catch {
       setScreenShareError("Screen share permission denied or unavailable.");
     }
@@ -4710,6 +4726,7 @@ export default function App() {
     }
     closeScreenShareWindow();
     if (callState.withUserId) {
+      socketRef.current?.emit("call:screen:stop", { toId: callState.withUserId });
       createOffer(callState.withUserId);
     }
   }
@@ -5884,12 +5901,6 @@ export default function App() {
         playBlackjackTone({ type: "triangle", start: 880, end: 620, duration: 0.08, gain: 0.02 });
       } else if (action === "stand") {
         playBlackjackTone({ type: "sine", start: 420, end: 360, duration: 0.07, gain: 0.018 });
-      } else if (action === "double") {
-        playBlackjackTone({ type: "square", start: 300, end: 240, duration: 0.08, gain: 0.024 });
-        playBlackjackTone({ type: "square", start: 420, end: 300, duration: 0.09, gain: 0.018, delay: 0.04 });
-      } else if (action === "split") {
-        playBlackjackTone({ type: "triangle", start: 760, end: 520, duration: 0.07, gain: 0.018 });
-        playBlackjackTone({ type: "triangle", start: 760, end: 520, duration: 0.07, gain: 0.018, delay: 0.05 });
       }
       const res = await apiFetch(`/api/blackjack/${blackjackMatch.id}/action`, {
         method: "POST",
@@ -6047,6 +6058,9 @@ export default function App() {
       if (CHAIN_MODE === "evm") {
         throw new Error("Use the on-chain deposit flow.");
       }
+      if (miniGameMatch.game_type === "coinflip") {
+        await saveMiniGameSide(miniGameSideChoice);
+      }
       const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/deposit`, {
         method: "POST",
         body: JSON.stringify({
@@ -6096,6 +6110,19 @@ export default function App() {
     }
   }
 
+  async function saveMiniGameSide(side = miniGameSideChoice) {
+    if (miniGameMatch?.game_type !== "coinflip" || !miniGameMatch?.id) return;
+    const normalized = String(side || "").toLowerCase();
+    if (normalized !== "heads" && normalized !== "tails") {
+      throw new Error("Choose heads or tails");
+    }
+    const res = await apiFetch(`/api/minigames/${miniGameMatch.id}/side`, {
+      method: "POST",
+      body: JSON.stringify({ side: normalized }),
+    });
+    if (res?.match) setMiniGameMatch(res.match);
+  }
+
   async function depositMiniGameOnchain() {
     if (!miniGameMatch?.id) return;
     setMiniGameBusy(true);
@@ -6103,6 +6130,9 @@ export default function App() {
     try {
       if (!selectedWalletOption) {
         throw new Error("Choose a wallet first.");
+      }
+      if (miniGameMatch.game_type === "coinflip") {
+        await saveMiniGameSide(miniGameSideChoice);
       }
       const ctx = await registerMiniGameWallet(selectedWalletOption);
       if (!ctx) return;
@@ -7431,6 +7461,9 @@ export default function App() {
     ? resolveUserById(miniGameMatch.winner_id, { user, friends, friendsAll, manualDmUsers, allUsers })
     : null;
   const miniGameAssignments = miniGameMatch?.state?.assignments || {};
+  const miniGameTakenSide = Object.entries(miniGameAssignments).find(
+    ([id, side]) => Number(id) !== Number(user?.id) && (side === "heads" || side === "tails")
+  )?.[1] || "";
   const miniGameWalletRegistered = miniGameMe?.wallet_address || "";
   const miniGameEscrowReady =
     !!miniGameMatch?.escrow_match_id &&
@@ -7466,7 +7499,7 @@ export default function App() {
       options.push({ id: "walletconnect", label: "WalletConnect", type: "walletconnect", icon: "" });
     }
     return options;
-  }, []);
+  }, [walletPickerOpen]);
   const selectedWalletOption = walletOptions.find((option) => option.id === blackjackWalletProviderId) || null;
   const renderGameSelect = ({ menuId, label, value, options, onChange, placeholder = "Select" }) => {
     const selected = options.find((option) => String(option.value) === String(value)) || null;
@@ -11450,9 +11483,9 @@ export default function App() {
                 </button>
               </div>
               <button
-                className={`xp-button xp-icon-btn xp-call-action-btn ${dmShareActive ? "active" : ""}`}
+                className={`xp-button xp-icon-btn xp-call-action-btn ${dmShareActive || !!dmShareStream ? "active" : ""}`}
                 onClick={dmShareActive ? stopDmScreenShare : startDmScreenShare}
-                title={dmShareActive ? "Stop screen share" : "Share screen"}
+                title={dmShareActive ? "Stop screen share" : !!dmShareStream ? "Remote screen share active" : "Share screen"}
               >
                 {getScreenShareIcon()}
               </button>
@@ -11637,9 +11670,9 @@ export default function App() {
                   </button>
                 </div>
                 <button
-                  className={`xp-button xp-icon-btn xp-call-action-btn ${groupLocalScreenRef.current ? "active" : ""}`}
+                  className={`xp-button xp-icon-btn xp-call-action-btn ${groupLocalScreenRef.current || Object.keys(groupShares).length ? "active" : ""}`}
                   onClick={groupLocalScreenRef.current ? stopGroupScreenShare : startGroupScreenShare}
-                  title={groupLocalScreenRef.current ? "Stop screen share" : "Share screen"}
+                  title={groupLocalScreenRef.current ? "Stop screen share" : Object.keys(groupShares).length ? "Someone is screensharing" : "Share screen"}
                 >
                   {getScreenShareIcon()}
                 </button>
@@ -12382,26 +12415,6 @@ export default function App() {
                             >
                               Stand
                             </button>
-                            <button
-                              className="xp-button"
-                              disabled={
-                                !blackjackIsMyTurn ||
-                                blackjackActionBusy ||
-                                (blackjackState?.players?.[user?.id]?.hands?.[
-                                  blackjackState?.players?.[user?.id]?.activeHand || 0
-                                ]?.cards?.length || 0) !== 2
-                              }
-                              onClick={() => blackjackAction("double")}
-                            >
-                              Double
-                            </button>
-                            <button
-                              className="xp-button"
-                              disabled={!blackjackIsMyTurn || blackjackActionBusy}
-                              onClick={() => blackjackAction("split")}
-                            >
-                              Split
-                            </button>
                           </div>
                         </div>
                       )}
@@ -12652,6 +12665,27 @@ export default function App() {
                             disabled={miniGameMatch.game_type === "coinflip"}
                           />
                         </label>
+                        {miniGameMatch.game_type === "coinflip" && (
+                          <label>
+                            Pick side
+                            <div className="xp-minigame-side-picker">
+                              {["heads", "tails"].map((side) => {
+                                const taken = miniGameTakenSide === side;
+                                return (
+                                  <button
+                                    key={side}
+                                    type="button"
+                                    className={`xp-button ${miniGameSideChoice === side ? "xp-call-action-btn active" : ""}`}
+                                    disabled={taken || miniGameBusy || miniGameMe?.status === "deposited"}
+                                    onClick={() => setMiniGameSideChoice(side)}
+                                  >
+                                    {side.toUpperCase()}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </label>
+                        )}
                         {CHAIN_MODE === "evm" ? (
                           <>
                             <button className="xp-button" onClick={() => openWalletPicker("connect")} disabled={miniGameBusy}>
@@ -12885,7 +12919,10 @@ export default function App() {
             <div className="xp-modal-body">
               <div className="xp-wallet-picker">
                 {walletOptions.length === 0 && (
-                  <div className="xp-muted">No supported wallet was detected. Install an EVM wallet or configure WalletConnect.</div>
+                  <div className="xp-muted">
+                    No supported wallet was detected. Install an EVM wallet extension first.
+                    {!WALLETCONNECT_PROJECT_ID ? " WalletConnect is also unavailable until VITE_WALLETCONNECT_PROJECT_ID is configured." : ""}
+                  </div>
                 )}
                 {walletOptions.map((option) => (
                   <button

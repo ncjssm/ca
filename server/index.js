@@ -688,13 +688,22 @@ function resolveMiniGameWinner(match) {
     if (!match.state?.result) {
       const side = Math.random() < 0.5 ? "heads" : "tails";
       const ordered = [...match.players];
+      const assignments = { ...(match.state?.assignments || {}) };
+      const usedSides = new Set(Object.values(assignments).filter((value) => value === "heads" || value === "tails"));
+      for (const player of ordered) {
+        if (assignments[player.user_id] === "heads" || assignments[player.user_id] === "tails") continue;
+        if (!usedSides.has("heads")) {
+          assignments[player.user_id] = "heads";
+          usedSides.add("heads");
+        } else if (!usedSides.has("tails")) {
+          assignments[player.user_id] = "tails";
+          usedSides.add("tails");
+        }
+      }
       match.state = {
         ...(match.state || {}),
         coinSide: side,
-        assignments: {
-          [ordered[0].user_id]: "heads",
-          [ordered[1].user_id]: "tails",
-        },
+        assignments,
         result: side,
       };
     }
@@ -747,6 +756,40 @@ async function finalizeMiniGameAfterReveal(match) {
     }
     maybeNotifyMiniGameWinner(match);
   }
+  return match;
+}
+
+function setCoinflipPlayerSide(match, userId, rawSide) {
+  if (!match || match.game_type !== "coinflip") {
+    throw new Error("Coinflip side selection is not available");
+  }
+  if (match.status !== "deposit") {
+    throw new Error("Coinflip side selection is closed");
+  }
+  const side = String(rawSide || "").toLowerCase();
+  if (side !== "heads" && side !== "tails") {
+    throw new Error("Choose heads or tails");
+  }
+  const player = (match.players || []).find((entry) => entry.user_id === userId);
+  if (!player) {
+    throw new Error("Not a participant");
+  }
+  if (player.status === "deposited") {
+    throw new Error("Side is locked after deposit");
+  }
+  const assignments = { ...(match.state?.assignments || {}) };
+  const takenBy = (match.players || []).find(
+    (entry) => entry.user_id !== userId && assignments[entry.user_id] === side
+  );
+  if (takenBy) {
+    throw new Error(`${side[0].toUpperCase()}${side.slice(1)} is already taken`);
+  }
+  delete assignments[userId];
+  assignments[userId] = side;
+  match.state = {
+    ...(match.state || {}),
+    assignments,
+  };
   return match;
 }
 
@@ -1026,23 +1069,8 @@ function applyPlayerAction(state, playerId, action) {
     }
   } else if (action === "stand") {
     hand.status = "stand";
-  } else if (action === "double") {
-    if (hand.cards.length !== 2) return { ok: false, error: "Double not allowed" };
-    hand.bet *= 2;
-    hand.cards.push(dealCard(state));
-    if (handValue(hand.cards) > 21) {
-      hand.status = "bust";
-    } else {
-      hand.status = "stand";
-    }
-  } else if (action === "split") {
-    if (!canSplit(hand)) return { ok: false, error: "Split not allowed" };
-    const [first, second] = hand.cards;
-    hand.cards = [first];
-    const newHand = { cards: [second], bet: hand.bet, status: "playing" };
-    hand.cards.push(dealCard(state));
-    newHand.cards.push(dealCard(state));
-    player.hands.splice(player.activeHand + 1, 0, newHand);
+  } else if (action === "double" || action === "split") {
+    return { ok: false, error: "Double and split are disabled for this table" };
   } else {
     return { ok: false, error: "Unknown action" };
   }
@@ -3163,6 +3191,22 @@ app.get("/api/minigames/:id", requireAuth, (req, res) => {
     .catch((err) => {
       res.status(500).json({ error: formatEvmError(err, "Unable to load game") });
     });
+});
+
+app.post("/api/minigames/:id/side", requireAuth, (req, res) => {
+  const match = getMiniGameMatch(Number(req.params.id));
+  const { side } = req.body || {};
+  if (!match) return res.status(404).json({ error: "Game not found" });
+  const player = (match.players || []).find((p) => p.user_id === req.session.userId);
+  if (!player) return res.status(403).json({ error: "Not a participant" });
+  try {
+    setCoinflipPlayerSide(match, req.session.userId, side);
+  } catch (err) {
+    return res.status(400).json({ error: err.message || "Unable to set side" });
+  }
+  saveMiniGameMatch(match);
+  emitMiniGameUpdate(match);
+  res.json({ ok: true, match: sanitizeMiniGameMatch(match, req.session.userId) });
 });
 
 app.post("/api/minigames/:id/wallet", requireAuth, async (req, res) => {
